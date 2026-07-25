@@ -1,6 +1,6 @@
-// ForeScore app logic. Plain JS, no build step. Talks directly to Supabase.
+// TeeBoard app logic. Plain JS, no build step. Talks directly to Supabase.
 
-const CFG = window.FORESCORE_CONFIG || {};
+const CFG = window.TEEBOARD_CONFIG || {};
 const CONFIGURED = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR_SUPABASE_URL_HERE");
 const sb = CONFIGURED ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
@@ -121,7 +121,7 @@ function viewHome() {
   app.innerHTML = `
     <div class="text-center my-6">
       <div class="text-5xl mb-2">⛳</div>
-      <h1 class="text-2xl font-bold text-green-900">ForeScore</h1>
+      <h1 class="text-2xl font-bold text-green-900">TeeBoard</h1>
       <p class="text-gray-500 mt-1">Live scoring for scrambles &amp; small tournaments</p>
     </div>
 

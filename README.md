@@ -1,4 +1,4 @@
-# ForeScore
+# TeeBoard
 
 Live scoring and leaderboards for scrambles and small tournaments — built for a weekly 4-player league, works for anyone.
 
@@ -25,7 +25,7 @@ No passwords. Access is by knowing the code, same as a real scorecard — approp
 Open `config.js` and paste in the two values:
 
 ```js
-window.FORESCORE_CONFIG = {
+window.TEEBOARD_CONFIG = {
   SUPABASE_URL: "https://xxxxxxxx.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOi...",
 };

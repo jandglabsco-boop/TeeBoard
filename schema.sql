@@ -1,4 +1,4 @@
--- ForeScore schema
+-- TeeBoard schema
 -- Run this in your Supabase project's SQL editor (Project > SQL Editor > New query)
 
 create extension if not exists "pgcrypto";
