@@ -6,8 +6,9 @@ Plain HTML/JS front end (`index.html`, `app.js`, `config.js`) backed by [Supabas
 
 ## How it works
 
-- **Course/organizer** opens the site, taps **Create a Tournament**, sets holes and par, gets a 5-character join code (and a QR code) to share.
+- **Course/organizer** opens the site, taps **Create a Tournament**, searches for their course (real par-by-hole data auto-fills from [OpenGolfAPI](https://opengolfapi.org), free & keyless), and gets a 5-character join code (and a QR code) to share.
 - **Players** open the site (link, QR code, or bookmark), tap **Join a Tournament**, enter the code, then either create a team (gets a 4-character team code to share with teammates) or join an existing team with that code.
+- **Organizers can also skip manual sign-ups**: upload a CSV roster from the admin dashboard (columns `team`, `player`, or just a list of names) to bulk-create teams ahead of time, then hand out each team's code.
 - Any player on a team can enter that team's scramble score per hole from their own phone — one shared scorecard per team.
 - Anyone with the tournament link can open **Leaderboard** — no login needed — and watch it update live as scores come in.
 
@@ -68,8 +69,9 @@ Once it's hosted, players can open it in their phone browser and use **Add to Ho
 
 - **Scramble format**: one team score per hole (not per-player strokes). Best-ball or stroke-play-per-player would need a small schema change — ask if you want that next.
 - **No formal login**: players just type a name; "my team" is remembered on that phone via browser storage. Good enough for a weekly league; swappable for real accounts (Supabase Auth) later if you open this up more broadly.
-- **Par defaults to 4** on every hole if you don't enter your course's actual pars when creating the tournament.
+- **Par defaults to 4** on every hole if you don't enter your course's actual pars when creating the tournament (or the course search comes up empty — not every course is in OpenGolfAPI's database yet).
 - **Realtime + 15s fallback polling** on the leaderboard, since course wifi/cell signal can be spotty.
+- **CSV import** matches teams by exact name if you re-upload (won't duplicate), and only supports the scramble one-score-per-team-per-hole model — not per-player rosters with individual handicaps.
 
 ## Ideas for next iterations
 
