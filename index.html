@@ -4,27 +4,29 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>TeeBoard</title>
-<meta name="theme-color" content="#166534" />
+<meta name="theme-color" content="#0b0f19" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛳</text></svg>" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   .card { background: white; border-radius: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06); }
   input, select { border: 1px solid #d1d5db; border-radius: .5rem; padding: .6rem .75rem; width: 100%; font-size: 1rem; }
   button { cursor: pointer; }
-  .btn-primary { background: #166534; color: white; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
+  .btn-primary { background: #2563eb; color: white; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
   .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-  .btn-secondary { background: #e5e7eb; color: #111827; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
-  .btn-ghost { color: #166534; font-weight: 600; }
+  .btn-secondary { background: #e5e7eb; color: #0b0f19; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
+  .btn-ghost { color: #2563eb; font-weight: 600; }
   .score-btn { width: 2.75rem; height: 2.75rem; border-radius: 9999px; font-weight: 700; font-size: 1.1rem; }
+  .search-result:hover { background: #eff6ff; }
 </style>
 </head>
-<body class="bg-green-50 min-h-screen text-gray-900">
-  <header class="bg-green-800 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow">
+<body class="bg-slate-50 min-h-screen text-gray-900">
+  <header class="bg-[#0b0f19] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow">
     <a href="#/" class="flex items-center gap-2 font-bold text-lg">⛳ TeeBoard</a>
-    <span id="header-sub" class="text-green-100 text-sm"></span>
+    <span id="header-sub" class="text-blue-300 text-sm"></span>
   </header>
 
   <main id="app" class="max-w-lg mx-auto p-4 pb-16"></main>
