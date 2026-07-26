@@ -74,6 +74,14 @@ function clearRealtime() {
   }
 }
 
+// ---------- auth (organizer accounts) ----------
+// Only needed to CREATE/manage a tournament. Players never sign in — they
+// just use a join code.
+async function getUser() {
+  const { data: { user } } = await sb.auth.getUser();
+  return user;
+}
+
 // ---------- router ----------
 
 const routes = [
@@ -113,10 +121,24 @@ window.addEventListener("DOMContentLoaded", () => {
 
 // ---------- HOME ----------
 
-function viewHome() {
-  const admin = myTournaments();
+async function viewHome() {
+  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+
+  const user = await getUser();
   const teams = myTeams();
   const teamEntries = Object.entries(teams);
+
+  let owned = [];
+  if (user) {
+    const { data } = await sb
+      .from("tournaments")
+      .select("id, name, join_code")
+      .eq("created_by", user.id)
+      .order("created_at", { ascending: false });
+    owned = data || [];
+  }
+  // tournaments created on this browser before accounts existed (created_by is null for those)
+  const legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
 
   app.innerHTML = `
     <div class="text-center my-6">
@@ -124,6 +146,8 @@ function viewHome() {
       <h1 class="text-2xl font-bold text-[#0b0f19]">TeeBoard</h1>
       <p class="text-gray-500 mt-1">Live scoring for scrambles &amp; small tournaments</p>
     </div>
+
+    ${user ? `<p class="text-center text-xs text-gray-400 -mt-4 mb-6">Signed in as ${escapeHtml(user.email)} &middot; <a href="#" id="sign-out" class="underline">Sign out</a></p>` : ""}
 
     <div class="grid grid-cols-1 gap-3">
       <a href="#/join" class="card p-5 flex items-center gap-4 hover:shadow-md transition">
@@ -157,10 +181,19 @@ function viewHome() {
       </div>
     ` : ""}
 
-    ${admin.length ? `
+    ${(owned.length || legacy.length) ? `
       <h2 class="font-bold text-gray-600 text-sm uppercase mt-8 mb-2">Tournaments I Created</h2>
       <div class="grid grid-cols-1 gap-2">
-        ${admin.map((t) => `
+        ${owned.map((t) => `
+          <a href="#/admin/${t.id}" class="card p-4 flex items-center justify-between">
+            <div>
+              <div class="font-semibold">${escapeHtml(t.name)}</div>
+              <div class="text-xs text-gray-500">code ${escapeHtml(t.join_code)}</div>
+            </div>
+            <span class="btn-ghost">Manage &rarr;</span>
+          </a>
+        `).join("")}
+        ${legacy.map((t) => `
           <a href="#/admin/${t.id}" class="card p-4 flex items-center justify-between">
             <div>
               <div class="font-semibold">${escapeHtml(t.name)}</div>
@@ -172,6 +205,14 @@ function viewHome() {
       </div>
     ` : ""}
   `;
+
+  if (user) {
+    document.getElementById("sign-out").addEventListener("click", async (e) => {
+      e.preventDefault();
+      await sb.auth.signOut();
+      viewHome();
+    });
+  }
 }
 
 // ---------- CREATE TOURNAMENT ----------
@@ -179,9 +220,90 @@ function viewHome() {
 const COURSE_SEARCH_URL = "https://api.opengolfapi.org/v1/courses/search?q=";
 const COURSE_DETAIL_URL = "https://api.opengolfapi.org/v1/courses/";
 
-function viewCreate() {
+async function viewCreate() {
+  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  const user = await getUser();
+  if (!user) return renderAuthGate();
+  renderCreateForm(user);
+}
+
+function renderAuthGate() {
+  let mode = "signin";
+
+  function draw() {
+    app.innerHTML = `
+      <h1 class="text-xl font-bold mb-4">Create a Tournament</h1>
+      <div class="card p-5">
+        <p class="text-sm text-gray-600 mb-4">Creating a tournament needs a free organizer account, so only you can manage it later. Players never need an account — they just use a join code.</p>
+        <div class="flex gap-2 mb-4">
+          <button id="tab-signin" class="${mode === "signin" ? "btn-primary" : "btn-secondary"} flex-1">Sign In</button>
+          <button id="tab-signup" class="${mode === "signup" ? "btn-primary" : "btn-secondary"} flex-1">Sign Up</button>
+        </div>
+        <label class="text-sm font-semibold">Email</label>
+        <input id="auth-email" type="email" placeholder="you@email.com" class="mb-3" />
+        <label class="text-sm font-semibold">Password</label>
+        <input id="auth-password" type="password" placeholder="At least 6 characters" class="mb-3" />
+        <button id="auth-submit" class="btn-primary w-full">${mode === "signup" ? "Create Account" : "Sign In"}</button>
+        <div id="auth-status" class="text-xs mt-3"></div>
+      </div>
+    `;
+
+    document.getElementById("tab-signin").addEventListener("click", () => { mode = "signin"; draw(); });
+    document.getElementById("tab-signup").addEventListener("click", () => { mode = "signup"; draw(); });
+
+    document.getElementById("auth-submit").addEventListener("click", async () => {
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      const statusEl = document.getElementById("auth-status");
+      const btn = document.getElementById("auth-submit");
+
+      if (!email || !password) {
+        statusEl.className = "text-xs mt-3 text-red-600";
+        statusEl.textContent = "Enter an email and password.";
+        return;
+      }
+
+      btn.disabled = true;
+      statusEl.className = "text-xs mt-3 text-gray-500";
+      statusEl.textContent = mode === "signup" ? "Creating account…" : "Signing in…";
+
+      if (mode === "signup") {
+        const { data, error } = await sb.auth.signUp({ email, password });
+        btn.disabled = false;
+        if (error) {
+          statusEl.className = "text-xs mt-3 text-red-600";
+          statusEl.textContent = error.message;
+          return;
+        }
+        if (data.session) return viewCreate();
+        // Project has "confirm email" turned on — no session until they click the email link.
+        mode = "signin";
+        draw();
+        const s = document.getElementById("auth-status");
+        s.className = "text-xs mt-3 text-blue-700 font-semibold";
+        s.textContent = "Account created — check your email to confirm it, then sign in here.";
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        btn.disabled = false;
+        if (error) {
+          statusEl.className = "text-xs mt-3 text-red-600";
+          statusEl.textContent = error.message;
+          return;
+        }
+        viewCreate();
+      }
+    });
+  }
+
+  draw();
+}
+
+function renderCreateForm(user) {
   app.innerHTML = `
-    <h1 class="text-xl font-bold mb-4">Create a Tournament</h1>
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-xl font-bold">Create a Tournament</h1>
+      <span class="text-xs text-gray-400">${escapeHtml(user.email)} &middot; <a href="#" id="sign-out" class="underline">Sign out</a></span>
+    </div>
     <form id="create-form" class="card p-5 flex flex-col gap-4">
       <div>
         <label class="text-sm font-semibold">Tournament name</label>
@@ -209,6 +331,12 @@ function viewCreate() {
       <button class="btn-primary" type="submit">Create &amp; Get Code</button>
     </form>
   `;
+
+  document.getElementById("sign-out").addEventListener("click", async (e) => {
+    e.preventDefault();
+    await sb.auth.signOut();
+    location.hash = "#/";
+  });
 
   const courseInput = document.getElementById("course-input");
   const resultsBox = document.getElementById("course-results");
@@ -330,7 +458,7 @@ function viewCreate() {
       const code = genCode(5);
       const { data, error } = await sb
         .from("tournaments")
-        .insert({ name, course_name: course || null, join_code: code, num_holes: numHoles, par })
+        .insert({ name, course_name: course || null, join_code: code, num_holes: numHoles, par, created_by: user.id })
         .select()
         .single();
       if (data) tournament = data;
@@ -357,11 +485,18 @@ function viewCreate() {
 async function viewAdmin(tournamentId) {
   app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
 
-  const { data: tournament, error } = await sb.from("tournaments").select("*").eq("id", tournamentId).single();
+  const [{ data: tournament, error }, user] = await Promise.all([
+    sb.from("tournaments").select("*").eq("id", tournamentId).single(),
+    getUser(),
+  ]);
   if (error || !tournament) {
     app.innerHTML = `<div class="card p-5 mt-6">Tournament not found.</div>`;
     return;
   }
+  // Tournaments created before accounts existed have no owner — anyone with the
+  // admin link can still manage those, same as before. Newer ones are owner-only
+  // (also enforced by RLS on the database side).
+  const isOwner = !tournament.created_by || (user && tournament.created_by === user.id);
   saveMyTournament({ id: tournament.id, name: tournament.name, code: tournament.join_code });
 
   async function render() {
@@ -405,18 +540,22 @@ async function viewAdmin(tournamentId) {
         `).join("")}
       </div>
 
-      <div class="card p-4 mb-4">
-        <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Import Roster (CSV)</h2>
-        <p class="text-xs text-gray-500 mb-2">
-          Columns: <code class="bg-gray-100 px-1 rounded">team</code>, <code class="bg-gray-100 px-1 rounded">player</code>.
-          No team column? Everyone gets auto-grouped into teams of 4, in file order.
-          <a class="underline text-blue-700" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
-        </p>
-        <input type="file" id="csv-input" accept=".csv,text/csv" />
-        <div id="csv-status" class="text-xs text-gray-500 mt-2"></div>
-      </div>
+      ${isOwner ? `
+        <div class="card p-4 mb-4">
+          <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Import Roster (CSV)</h2>
+          <p class="text-xs text-gray-500 mb-2">
+            Columns: <code class="bg-gray-100 px-1 rounded">team</code>, <code class="bg-gray-100 px-1 rounded">player</code>.
+            No team column? Everyone gets auto-grouped into teams of 4, in file order.
+            <a class="underline text-blue-700" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
+          </p>
+          <input type="file" id="csv-input" accept=".csv,text/csv" />
+          <div id="csv-status" class="text-xs text-gray-500 mt-2"></div>
+        </div>
 
-      <button id="toggle-status" class="btn-secondary w-full">${tournament.status === "active" ? "Close tournament" : "Reopen tournament"}</button>
+        <button id="toggle-status" class="btn-secondary w-full">${tournament.status === "active" ? "Close tournament" : "Reopen tournament"}</button>
+      ` : `
+        <p class="text-xs text-gray-400 text-center">Only the organizer who created this tournament can manage roster imports and settings.</p>
+      `}
     `;
 
     if (window.QRCode) QRCode.toCanvas(document.getElementById("qr"), joinUrl, { width: 160 });
@@ -424,17 +563,20 @@ async function viewAdmin(tournamentId) {
     document.getElementById("copy-link").addEventListener("click", () => {
       navigator.clipboard.writeText(joinUrl).then(() => toast("Join link copied"));
     });
-    document.getElementById("toggle-status").addEventListener("click", async () => {
-      const newStatus = tournament.status === "active" ? "closed" : "active";
-      await sb.from("tournaments").update({ status: newStatus }).eq("id", tournament.id);
-      tournament.status = newStatus;
-      render();
-    });
-    document.getElementById("csv-input").addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (file) await importRosterCsv(file);
-      e.target.value = "";
-    });
+
+    if (isOwner) {
+      document.getElementById("toggle-status").addEventListener("click", async () => {
+        const newStatus = tournament.status === "active" ? "closed" : "active";
+        await sb.from("tournaments").update({ status: newStatus }).eq("id", tournament.id);
+        tournament.status = newStatus;
+        render();
+      });
+      document.getElementById("csv-input").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (file) await importRosterCsv(file);
+        e.target.value = "";
+      });
+    }
   }
 
   function findColumn(fields, candidates) {
