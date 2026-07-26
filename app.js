@@ -112,7 +112,7 @@ async function renderHeaderProfile() {
   const initial = escapeHtml(user.email.charAt(0).toUpperCase());
   el.innerHTML = `
     <div class="relative">
-      <button id="profile-btn" class="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center">${initial}</button>
+      <button id="profile-btn" class="w-8 h-8 rounded-full bg-green-600 text-white font-bold text-sm flex items-center justify-center">${initial}</button>
       <div id="profile-menu" class="hidden absolute right-0 mt-2 w-56 card text-gray-900 p-3 z-30">
         <div class="text-xs text-gray-500 mb-2 break-all">Signed in as<br><b>${escapeHtml(user.email)}</b></div>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
@@ -195,8 +195,16 @@ async function viewHome() {
 
   app.innerHTML = `
     <div class="text-center my-7">
-      <div class="text-5xl mb-3">⛳</div>
-      <h1 class="brand text-3xl font-semibold text-[#0b0f19]">TeeBoard</h1>
+      <svg width="72" height="72" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="mx-auto mb-2">
+        <path d="M20 92 Q50 82 80 92" stroke="#2fa84f" stroke-width="5" stroke-linecap="round" fill="none" />
+        <path d="M42 66 L58 66 L52 88 L48 88 Z" fill="#16231d" />
+        <circle cx="50" cy="17" r="7" fill="none" stroke="#16231d" stroke-width="4" />
+        <rect x="14" y="20" width="72" height="46" rx="9" fill="#ffffff" stroke="#16231d" stroke-width="4" />
+        <line x1="14" y1="35" x2="86" y2="35" stroke="#16231d" stroke-width="2.5" />
+        <line x1="14" y1="50" x2="86" y2="50" stroke="#16231d" stroke-width="2.5" />
+        <circle cx="60" cy="58" r="6.5" fill="none" stroke="#2fa84f" stroke-width="3" />
+      </svg>
+      <h1 class="wordmark text-3xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></h1>
       <p class="text-gray-500 mt-1.5">Live scoring for scrambles &amp; small tournaments</p>
     </div>
 
@@ -326,7 +334,7 @@ function renderAuthGate() {
         mode = "signin";
         draw();
         const s = document.getElementById("auth-status");
-        s.className = "text-xs mt-3 text-blue-700 font-semibold";
+        s.className = "text-xs mt-3 text-green-700 font-semibold";
         s.textContent = "Account created — check your email to confirm it, then sign in here.";
       } else {
         const { error } = await sb.auth.signInWithPassword({ email, password });
@@ -361,7 +369,7 @@ function renderCreateForm(user) {
         <input id="course-input" name="course" placeholder="Search for your course… e.g. Pine Valley" autocomplete="off" />
         <div id="course-results" class="hidden absolute z-20 left-0 right-0 mt-1 card max-h-64 overflow-y-auto"></div>
         <p id="course-attribution" class="text-xs text-gray-400 mt-1">Search pulls real course data (holes &amp; par) from <a href="https://opengolfapi.org" target="_blank" class="underline">OpenGolfAPI</a>, free &amp; open (ODbL). Can't find your course? That's okay — every hole will default to par 4.</p>
-        <p id="course-selected-note" class="hidden text-xs text-blue-700 font-semibold mt-1"></p>
+        <p id="course-selected-note" class="hidden text-xs text-green-700 font-semibold mt-1"></p>
       </div>
       <div>
         <label class="text-sm font-semibold">Holes</label>
@@ -635,13 +643,13 @@ async function viewAdmin(tournamentId) {
     app.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h1 class="text-xl font-bold">${escapeHtml(tournament.name)}</h1>
-        <span class="text-xs px-2 py-1 rounded-full ${tournament.status === "active" ? "bg-blue-100 text-blue-800" : "bg-gray-200 text-gray-600"}">${tournament.status}</span>
+        <span class="text-xs px-2 py-1 rounded-full ${tournament.status === "active" ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-600"}">${tournament.status}</span>
       </div>
       ${tournament.course_name ? `<p class="text-gray-500 text-sm mb-4">${escapeHtml(tournament.course_name)} &middot; ${tournament.num_holes} holes</p>` : ""}
 
       <div id="qr-print-area" class="card p-5 text-center mb-4">
         <div class="text-sm text-gray-500 mb-1">Join code</div>
-        <div class="text-4xl font-black tracking-widest text-blue-700">${tournament.join_code}</div>
+        <div class="text-4xl font-black tracking-widest text-green-700">${tournament.join_code}</div>
         <canvas id="qr" class="mx-auto mt-3"></canvas>
         <div class="text-xs text-gray-400 mt-2">Scan to join &amp; score &mdash; ${escapeHtml(tournament.name)}</div>
         <div class="flex gap-2 mt-3 no-print">
@@ -719,7 +727,7 @@ async function viewAdmin(tournamentId) {
           <p class="text-xs text-gray-500 mb-2">
             Columns: <code class="bg-gray-100 px-1 rounded">team</code>, <code class="bg-gray-100 px-1 rounded">player</code>.
             No team column? Everyone gets auto-grouped into teams of 4, in file order.
-            <a class="underline text-blue-700" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
+            <a class="underline text-green-700" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
           </p>
           <input type="file" id="csv-input" accept=".csv,text/csv" />
           <div id="csv-status" class="text-xs text-gray-500 mt-2"></div>
@@ -1359,7 +1367,7 @@ async function viewTeam(teamId) {
       ` : ""}
 
       <div class="card p-4 flex items-center justify-around text-center mb-4">
-        <div><div class="text-2xl font-black text-blue-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
+        <div><div class="text-2xl font-black text-green-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
         <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
         <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
       </div>
@@ -1565,7 +1573,7 @@ async function viewScorecard(teamId) {
       ` : ""}
 
       <div class="card p-4 flex items-center justify-around text-center mb-3">
-        <div><div class="text-2xl font-black text-blue-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
+        <div><div class="text-2xl font-black text-green-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
         <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
         <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
       </div>
