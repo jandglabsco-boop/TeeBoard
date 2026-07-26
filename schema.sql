@@ -116,3 +116,9 @@ create policy "only owner can update their tournament" on tournaments
 -- re-run.
 drop policy if exists "public delete team_members" on team_members;
 create policy "public delete team_members" on team_members for delete using (true);
+
+-- Scorecard "review & sign" flow: once a team signs off, their scorecard
+-- locks and the leaderboard shows an "F" (finished) badge. Organizers can
+-- reopen a signed scorecard from the admin panel if needed. Safe to re-run.
+alter table teams add column if not exists signed_at timestamptz;
+alter table teams add column if not exists signed_by text;

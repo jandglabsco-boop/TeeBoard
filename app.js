@@ -609,7 +609,7 @@ async function viewAdmin(tournamentId) {
   async function render() {
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, join_code, team_members(id, player_name), scores(hole_number)")
+      .select("id, name, join_code, signed_at, signed_by, team_members(id, player_name), scores(hole_number)")
       .eq("tournament_id", tournamentId)
       .order("created_at", { ascending: true });
 
@@ -622,12 +622,14 @@ async function viewAdmin(tournamentId) {
       </div>
       ${tournament.course_name ? `<p class="text-gray-500 text-sm mb-4">${escapeHtml(tournament.course_name)} &middot; ${tournament.num_holes} holes</p>` : ""}
 
-      <div class="card p-5 text-center mb-4">
+      <div id="qr-print-area" class="card p-5 text-center mb-4">
         <div class="text-sm text-gray-500 mb-1">Join code</div>
         <div class="text-4xl font-black tracking-widest text-blue-700">${tournament.join_code}</div>
         <canvas id="qr" class="mx-auto mt-3"></canvas>
-        <div class="flex gap-2 mt-3">
+        <div class="text-xs text-gray-400 mt-2">Scan to join &amp; score &mdash; ${escapeHtml(tournament.name)}</div>
+        <div class="flex gap-2 mt-3 no-print">
           <button id="copy-link" class="btn-secondary flex-1">Copy join link</button>
+          <button id="print-qr" class="btn-secondary flex-1">Print QR</button>
           <a href="#/leaderboard/${tournament.id}" class="btn-primary flex-1 text-center">Leaderboard</a>
         </div>
       </div>
@@ -640,11 +642,11 @@ async function viewAdmin(tournamentId) {
           return `
           <div class="card p-4">
             <div class="flex items-center justify-between">
-              <div class="font-semibold">${escapeHtml(t.name)}</div>
+              <div class="font-semibold">${escapeHtml(t.name)}${t.signed_at ? ` <span class="fin-badge" title="Signed by ${escapeHtml(t.signed_by || "")}">F</span>` : ""}</div>
               <span class="text-xs text-gray-400">code ${escapeHtml(t.join_code)}</span>
             </div>
             <div class="text-xs text-gray-500 mt-1">${(t.team_members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "no players yet"}</div>
-            <div class="text-xs text-gray-400 mt-1">${(t.scores || []).length}/${tournament.num_holes} holes entered</div>
+            <div class="text-xs text-gray-400 mt-1">${(t.scores || []).length}/${tournament.num_holes} holes entered${t.signed_at ? ` &middot; signed by ${escapeHtml(t.signed_by || "—")}` : ""}</div>
             ${isOwner ? `
               <button data-manage-team="${escapeHtml(t.id)}" class="btn-ghost text-xs mt-2">${expanded ? "Hide" : "Edit team"}</button>
               <div class="${expanded ? "" : "hidden"} mt-3 pt-3 border-t border-gray-100">
@@ -664,10 +666,13 @@ async function viewAdmin(tournamentId) {
                   </div>
                 ` : ""}
                 <label class="text-xs font-semibold text-gray-500">Add player</label>
-                <div class="flex gap-2">
+                <div class="flex gap-2 mb-3">
                   <input data-quick-add-input="${escapeHtml(t.id)}" placeholder="Player name" class="flex-1" />
                   <button data-quick-add-btn="${escapeHtml(t.id)}" class="btn-primary">Add</button>
                 </div>
+                ${t.signed_at ? `
+                  <button data-reopen-team="${escapeHtml(t.id)}" class="btn-secondary text-xs w-full">Reopen scorecard (undo signing)</button>
+                ` : ""}
               </div>
             ` : ""}
           </div>
@@ -709,10 +714,13 @@ async function viewAdmin(tournamentId) {
       `}
     `;
 
-    if (window.QRCode) QRCode.toCanvas(document.getElementById("qr"), joinUrl, { width: 160 });
+    if (window.QRCode) QRCode.toCanvas(document.getElementById("qr"), joinUrl, { width: 200 });
 
     document.getElementById("copy-link").addEventListener("click", () => {
       navigator.clipboard.writeText(joinUrl).then(() => toast("Join link copied"));
+    });
+    document.getElementById("print-qr").addEventListener("click", () => {
+      window.print();
     });
 
     if (isOwner) {
@@ -801,6 +809,21 @@ async function viewAdmin(tournamentId) {
             btn.disabled = false;
             return toast("Couldn't remove player: " + error.message, true);
           }
+          render();
+        });
+      });
+
+      app.querySelectorAll("[data-reopen-team]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.reopenTeam;
+          if (!confirm("Reopen this scorecard? The team will be able to edit scores again.")) return;
+          btn.disabled = true;
+          const { error } = await sb.from("teams").update({ signed_at: null, signed_by: null }).eq("id", id);
+          if (error) {
+            btn.disabled = false;
+            return toast("Couldn't reopen: " + error.message, true);
+          }
+          toast("Scorecard reopened");
           render();
         });
       });
@@ -1158,6 +1181,11 @@ async function viewTeam(teamId) {
     return;
   }
   const tournament = team.tournaments;
+  const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
+
+  // "score" = the normal (editable, or locked-after-signing) scorecard.
+  // "review" = the review-and-sign screen shown before final submission.
+  let mode = "score";
 
   async function render() {
     const { data: members } = await sb.from("team_members").select("player_name").eq("team_id", teamId);
@@ -1165,7 +1193,6 @@ async function viewTeam(teamId) {
     const scoreMap = {};
     (scores || []).forEach((s) => (scoreMap[s.hole_number] = s.strokes));
 
-    const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
     let totalStrokes = 0, totalPar = 0, thru = 0;
     for (let h = 1; h <= tournament.num_holes; h++) {
       if (scoreMap[h] != null) {
@@ -1175,11 +1202,86 @@ async function viewTeam(teamId) {
       }
     }
     const toPar = totalStrokes - totalPar;
+    const isSigned = !!team.signed_at;
+    const allEntered = thru === tournament.num_holes;
+
+    if (mode === "review") {
+      app.innerHTML = `
+        <div class="mb-3">
+          <h1 class="text-xl font-bold">Review &amp; Sign</h1>
+          <p class="text-sm text-gray-500">${escapeHtml(team.name)} &middot; ${escapeHtml(tournament.name)}</p>
+        </div>
+        <div class="card overflow-hidden mb-4">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-gray-400 uppercase tracking-wide">
+                <th class="p-2 text-left font-semibold">Hole</th>
+                <th class="p-2 text-right font-semibold">Par</th>
+                <th class="p-2 text-right font-semibold">Strokes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${par.map((p, i) => `
+                <tr class="border-t border-gray-100">
+                  <td class="p-2">${i + 1}</td>
+                  <td class="p-2 text-right text-gray-400">${p}</td>
+                  <td class="p-2 text-right font-semibold">${scoreMap[i + 1] ?? "—"}</td>
+                </tr>
+              `).join("")}
+              <tr class="border-t border-gray-200 font-bold">
+                <td class="p-2">Total</td>
+                <td class="p-2 text-right text-gray-400">${totalPar}</td>
+                <td class="p-2 text-right">${totalStrokes}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card p-5 mb-4">
+          <p class="text-sm text-gray-600 mb-3">By signing, you confirm this scorecard is accurate for <b>${escapeHtml(team.name)}</b>. Once signed it locks — ask your organizer if you need a correction.</p>
+          <label class="text-sm font-semibold">Type your name to sign</label>
+          <input id="sign-name" placeholder="Your name" value="${escapeHtml(load("bb_player_name", ""))}" class="mb-3" />
+          <div class="flex gap-2">
+            <button id="back-to-edit" class="btn-secondary flex-1">Back</button>
+            <button id="sign-submit" class="btn-primary flex-1">Sign &amp; Submit</button>
+          </div>
+        </div>
+      `;
+      document.getElementById("back-to-edit").addEventListener("click", () => { mode = "score"; render(); });
+      document.getElementById("sign-submit").addEventListener("click", async () => {
+        const name = document.getElementById("sign-name").value.trim();
+        if (!name) return toast("Enter your name to sign", true);
+        const btn = document.getElementById("sign-submit");
+        btn.disabled = true;
+        btn.textContent = "Signing…";
+        const signedAt = new Date().toISOString();
+        const { error } = await sb.from("teams").update({ signed_at: signedAt, signed_by: name }).eq("id", teamId);
+        if (error) {
+          toast("Couldn't sign: " + error.message, true);
+          btn.disabled = false;
+          btn.textContent = "Sign & Submit";
+          return;
+        }
+        store("bb_player_name", name);
+        team.signed_at = signedAt;
+        team.signed_by = name;
+        mode = "score";
+        render();
+        toast("Scorecard signed — nice round!");
+      });
+      return;
+    }
 
     let holesHtml = "";
     for (let h = 1; h <= tournament.num_holes; h++) {
       const val = scoreMap[h] ?? "";
-      holesHtml += `
+      holesHtml += isSigned ? `
+        <div class="card p-3 flex items-center justify-between">
+          <div>
+            <div class="font-bold">Hole ${h}</div>
+            <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
+          </div>
+          <div class="text-lg font-bold w-16 text-center">${val || "—"}</div>
+        </div>` : `
         <div class="card p-3 flex items-center justify-between">
           <div>
             <div class="font-bold">Hole ${h}</div>
@@ -1200,6 +1302,13 @@ async function viewTeam(teamId) {
         <p class="text-xs text-gray-400">Players: ${(members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "—"}</p>
       </div>
 
+      ${isSigned ? `
+        <div class="card p-4 mb-4 text-center" style="background:#f0fdf4;border-color:#bbf7d0;">
+          <div class="text-sm font-bold text-green-700">✓ Signed by ${escapeHtml(team.signed_by)}</div>
+          <div class="text-xs text-green-600 mt-0.5">Scorecard submitted — nice round!</div>
+        </div>
+      ` : ""}
+
       <div class="card p-4 flex items-center justify-around text-center mb-4">
         <div><div class="text-2xl font-black text-blue-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
         <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
@@ -1208,29 +1317,40 @@ async function viewTeam(teamId) {
 
       <a href="#/leaderboard/${tournament.id}" class="btn-primary block text-center mb-4">View Live Leaderboard</a>
 
-      <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Enter Scores</h2>
-      <div class="grid grid-cols-1 gap-2">${holesHtml}</div>
+      <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">${isSigned ? "Final Scorecard" : "Enter Scores"}</h2>
+      <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
+
+      ${!isSigned ? `
+        <button id="review-sign-btn" class="btn-primary w-full" ${allEntered ? "" : "disabled"}>Review &amp; Sign Scorecard</button>
+        ${!allEntered ? `<p class="text-xs text-gray-400 text-center mt-2">Enter all ${tournament.num_holes} holes to sign and submit.</p>` : ""}
+      ` : ""}
     `;
 
-    app.querySelectorAll("button.score-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const hole = parseInt(btn.dataset.hole, 10);
-        const delta = parseInt(btn.dataset.delta, 10);
-        const input = app.querySelector(`input[data-hole="${hole}"]`);
-        let current = parseInt(input.value, 10) || par[hole - 1];
-        current = Math.max(1, current + delta);
-        input.value = current;
-        await saveScore(hole, current);
+    if (!isSigned) {
+      app.querySelectorAll("button.score-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const hole = parseInt(btn.dataset.hole, 10);
+          const delta = parseInt(btn.dataset.delta, 10);
+          const input = app.querySelector(`input[data-hole="${hole}"]`);
+          let current = parseInt(input.value, 10) || par[hole - 1];
+          current = Math.max(1, current + delta);
+          input.value = current;
+          await saveScore(hole, current);
+        });
       });
-    });
-    app.querySelectorAll('input[data-hole]').forEach((input) => {
-      input.addEventListener("change", async () => {
-        const hole = parseInt(input.dataset.hole, 10);
-        const val = parseInt(input.value, 10);
-        if (!val || val < 1) return;
-        await saveScore(hole, val);
+      app.querySelectorAll('input[data-hole]').forEach((input) => {
+        input.addEventListener("change", async () => {
+          const hole = parseInt(input.dataset.hole, 10);
+          const val = parseInt(input.value, 10);
+          if (!val || val < 1) return;
+          await saveScore(hole, val);
+        });
       });
-    });
+      const reviewBtn = document.getElementById("review-sign-btn");
+      if (reviewBtn && allEntered) {
+        reviewBtn.addEventListener("click", () => { mode = "review"; render(); });
+      }
+    }
   }
 
   async function saveScore(hole, strokes) {
@@ -1266,7 +1386,7 @@ async function viewLeaderboard(tournamentId) {
   async function render() {
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, scores(hole_number, strokes)")
+      .select("id, name, signed_at, scores(hole_number, strokes)")
       .eq("tournament_id", tournamentId);
 
     const rows = (teams || []).map((t) => {
@@ -1276,7 +1396,7 @@ async function viewLeaderboard(tournamentId) {
         parSum += par[s.hole_number - 1] ?? 4;
         thru++;
       });
-      return { name: t.name, strokes, thru, toPar: strokes - parSum };
+      return { name: t.name, strokes, thru, toPar: strokes - parSum, signed: !!t.signed_at };
     });
 
     rows.sort((a, b) => (a.thru === 0 ? 1 : 0) - (b.thru === 0 ? 1 : 0) || a.toPar - b.toPar || b.thru - a.thru);
@@ -1300,7 +1420,7 @@ async function viewLeaderboard(tournamentId) {
             ${rows.map((r, i) => `
               <tr class="border-t border-gray-100">
                 <td class="p-3"><span class="rank-badge${i === 0 && r.thru ? " gold" : ""}">${i + 1}</span></td>
-                <td class="p-3 font-semibold">${escapeHtml(r.name)}</td>
+                <td class="p-3 font-semibold">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed & submitted">F</span>` : ""}</td>
                 <td class="p-3 text-right">${r.thru ? `<span class="par-chip ${r.toPar < 0 ? "under" : "flat"}">${toParLabel(r.toPar)}</span>` : `<span class="text-gray-300">—</span>`}</td>
                 <td class="p-3 text-right text-gray-500">${r.thru}/${tournament.num_holes}</td>
               </tr>

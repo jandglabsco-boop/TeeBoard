@@ -124,6 +124,36 @@
   }
   .par-chip.under { background: #e8edff; color: var(--blue-dark); }
   .par-chip.flat { background: #f3f4f8; color: #475569; }
+
+  .fin-badge {
+    display: inline-block;
+    padding: .05rem .4rem;
+    border-radius: 9999px;
+    font-weight: 800;
+    font-size: .68rem;
+    background: #dcfce7;
+    color: #15803d;
+    vertical-align: middle;
+  }
+
+  @media print {
+    body * { visibility: hidden; }
+    #qr-print-area, #qr-print-area * { visibility: visible; }
+    #qr-print-area {
+      position: fixed;
+      inset: 0;
+      margin: 0;
+      border: none;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    #qr-print-area canvas { margin: 1.5rem auto; }
+    .no-print { display: none !important; }
+  }
 </style>
 </head>
 <body class="min-h-screen text-gray-900">
