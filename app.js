@@ -82,6 +82,41 @@ async function getUser() {
   return user;
 }
 
+// Persistent profile control in the header, present on every page. Shows
+// nothing for anonymous players; shows an avatar + "Sign out" menu for any
+// signed-in organizer, regardless of which view is currently open.
+async function renderHeaderProfile() {
+  const el = document.getElementById("header-profile");
+  if (!el) return;
+  const user = await getUser();
+  if (!user) {
+    el.innerHTML = "";
+    return;
+  }
+  const initial = escapeHtml(user.email.charAt(0).toUpperCase());
+  el.innerHTML = `
+    <div class="relative">
+      <button id="profile-btn" class="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center">${initial}</button>
+      <div id="profile-menu" class="hidden absolute right-0 mt-2 w-56 card text-gray-900 p-3 z-30">
+        <div class="text-xs text-gray-500 mb-2 break-all">Signed in as<br><b>${escapeHtml(user.email)}</b></div>
+        <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
+      </div>
+    </div>
+  `;
+  const btn = document.getElementById("profile-btn");
+  const menu = document.getElementById("profile-menu");
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.classList.toggle("hidden");
+  });
+  document.addEventListener("click", () => menu.classList.add("hidden"), { once: true });
+  document.getElementById("profile-signout").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    location.hash = "#/";
+    renderHeaderProfile();
+  });
+}
+
 // ---------- router ----------
 
 const routes = [
@@ -97,6 +132,7 @@ const routes = [
 function route() {
   clearRealtime();
   headerSub.textContent = "";
+  renderHeaderProfile();
   const hash = location.hash || "#/";
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -146,8 +182,6 @@ async function viewHome() {
       <h1 class="text-2xl font-bold text-[#0b0f19]">TeeBoard</h1>
       <p class="text-gray-500 mt-1">Live scoring for scrambles &amp; small tournaments</p>
     </div>
-
-    ${user ? `<p class="text-center text-xs text-gray-400 -mt-4 mb-6">Signed in as ${escapeHtml(user.email)} &middot; <a href="#" id="sign-out" class="underline">Sign out</a></p>` : ""}
 
     <div class="grid grid-cols-1 gap-3">
       <a href="#/join" class="card p-5 flex items-center gap-4 hover:shadow-md transition">
@@ -205,14 +239,6 @@ async function viewHome() {
       </div>
     ` : ""}
   `;
-
-  if (user) {
-    document.getElementById("sign-out").addEventListener("click", async (e) => {
-      e.preventDefault();
-      await sb.auth.signOut();
-      viewHome();
-    });
-  }
 }
 
 // ---------- CREATE TOURNAMENT ----------
@@ -228,7 +254,10 @@ async function viewCreate() {
 }
 
 function renderAuthGate() {
-  let mode = "signin";
+  // Default to Sign Up: most people hitting this gate are brand new
+  // organizers who don't have an account yet. Returning organizers can
+  // still tap "Sign In".
+  let mode = "signup";
 
   function draw() {
     app.innerHTML = `
@@ -236,8 +265,8 @@ function renderAuthGate() {
       <div class="card p-5">
         <p class="text-sm text-gray-600 mb-4">Creating a tournament needs a free organizer account, so only you can manage it later. Players never need an account — they just use a join code.</p>
         <div class="flex gap-2 mb-4">
-          <button id="tab-signin" class="${mode === "signin" ? "btn-primary" : "btn-secondary"} flex-1">Sign In</button>
           <button id="tab-signup" class="${mode === "signup" ? "btn-primary" : "btn-secondary"} flex-1">Sign Up</button>
+          <button id="tab-signin" class="${mode === "signin" ? "btn-primary" : "btn-secondary"} flex-1">Sign In</button>
         </div>
         <label class="text-sm font-semibold">Email</label>
         <input id="auth-email" type="email" placeholder="you@email.com" class="mb-3" />
@@ -275,7 +304,7 @@ function renderAuthGate() {
           statusEl.textContent = error.message;
           return;
         }
-        if (data.session) return viewCreate();
+        if (data.session) { renderHeaderProfile(); return viewCreate(); }
         // Project has "confirm email" turned on — no session until they click the email link.
         mode = "signin";
         draw();
@@ -290,6 +319,7 @@ function renderAuthGate() {
           statusEl.textContent = error.message;
           return;
         }
+        renderHeaderProfile();
         viewCreate();
       }
     });
@@ -302,7 +332,7 @@ function renderCreateForm(user) {
   app.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h1 class="text-xl font-bold">Create a Tournament</h1>
-      <span class="text-xs text-gray-400">${escapeHtml(user.email)} &middot; <a href="#" id="sign-out" class="underline">Sign out</a></span>
+      <span class="text-xs text-gray-400">${escapeHtml(user.email)}</span>
     </div>
     <form id="create-form" class="card p-5 flex flex-col gap-4">
       <div>
@@ -331,12 +361,6 @@ function renderCreateForm(user) {
       <button class="btn-primary" type="submit">Create &amp; Get Code</button>
     </form>
   `;
-
-  document.getElementById("sign-out").addEventListener("click", async (e) => {
-    e.preventDefault();
-    await sb.auth.signOut();
-    location.hash = "#/";
-  });
 
   const courseInput = document.getElementById("course-input");
   const resultsBox = document.getElementById("course-results");
@@ -407,14 +431,30 @@ function renderCreateForm(user) {
       const res = await fetch(COURSE_DETAIL_URL + encodeURIComponent(id));
       if (!res.ok) throw new Error("bad response");
       const course = await res.json();
-      const scorecard = (course.scorecard || []).slice().sort((a, b) => a.hole - b.hole);
-      if (!scorecard.length) {
+      const rawScorecard = course.scorecard || [];
+      if (!rawScorecard.length) {
         selectedNote.textContent = `Found ${name}, but no hole-by-hole scorecard on file — enter par manually.`;
         selectedNote.classList.remove("hidden");
         return;
       }
-      const holes = course.holes || scorecard.length;
-      const parArr = scorecard.map((h) => h.par);
+      // De-dupe by hole number (keep first) and sort, in case the source data
+      // has repeated entries.
+      const byHole = new Map();
+      for (const h of rawScorecard) {
+        if (!byHole.has(h.hole)) byHole.set(h.hole, h.par);
+      }
+      const holeNumbers = [...byHole.keys()].sort((a, b) => a - b);
+      const parArr = holeNumbers.map((h) => byHole.get(h));
+
+      // Trust the actual scorecard entries for the hole count — some records
+      // in OpenGolfAPI have a summary "holes"/"par" field that disagrees with
+      // the real per-hole card (confirmed: e.g. a course listed as par 70
+      // overall whose scorecard array actually sums to 72). Using the summary
+      // number here used to cause the par-count check on submit to silently
+      // discard the fetched card and fall back to a flat par 4 on every hole.
+      const holes = parArr.length;
+      const totalPar = parArr.reduce((a, b) => a + b, 0);
+
       if (String(holes) === "9" || String(holes) === "18") {
         holesSelect.value = String(holes);
       } else {
@@ -428,7 +468,12 @@ function renderCreateForm(user) {
         holesSelect.value = String(holes);
       }
       parInput.value = parArr.join(",");
-      selectedNote.textContent = `✓ Using ${name}'s official scorecard (${holes} holes, par ${parArr.reduce((a, b) => a + b, 0)})`;
+
+      const mismatchWarning = (course.par && course.par !== totalPar)
+        ? ` Heads up: OpenGolfAPI's summary lists par ${course.par} for this course overall, which doesn't match this card's total of ${totalPar} — double check the numbers below against your scorecard before sharing the join code.`
+        : " Double check the numbers below against your scorecard before sharing the join code.";
+      const siteLink = course.website ? ` <a href="${escapeHtml(course.website)}" target="_blank" class="underline">${escapeHtml(name)}'s site</a> ·` : "";
+      selectedNote.innerHTML = `✓ Using ${escapeHtml(name)}'s scorecard on file (${holes} holes, par ${totalPar}).${siteLink}${escapeHtml(mismatchWarning)}`;
       selectedNote.classList.remove("hidden");
     } catch {
       selectedNote.textContent = `Found ${name}, but couldn't load its scorecard — enter par manually.`;
