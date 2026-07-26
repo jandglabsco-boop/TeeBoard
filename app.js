@@ -128,8 +128,13 @@ async function renderHeaderProfile() {
   document.addEventListener("click", () => menu.classList.add("hidden"), { once: true });
   document.getElementById("profile-signout").addEventListener("click", async () => {
     await sb.auth.signOut();
-    location.hash = "#/";
-    renderHeaderProfile();
+    if (location.hash === "#/" || location.hash === "") {
+      // hashchange won't fire since the hash isn't actually changing, so
+      // force a re-render manually to drop the stale signed-in view.
+      route();
+    } else {
+      location.hash = "#/";
+    }
   });
 }
 
