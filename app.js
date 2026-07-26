@@ -187,6 +187,7 @@ async function viewHome() {
   const teamEntries = Object.entries(teams);
 
   let owned = [];
+  let legacy = [];
   if (user) {
     const { data } = await sb
       .from("tournaments")
@@ -194,9 +195,11 @@ async function viewHome() {
       .eq("created_by", user.id)
       .order("created_at", { ascending: false });
     owned = data || [];
+    // tournaments created on this browser before accounts existed (created_by is null
+    // for those). Only surfaced while signed in — otherwise a signed-out visitor on a
+    // browser that once created a tournament would still see a management list.
+    legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
   }
-  // tournaments created on this browser before accounts existed (created_by is null for those)
-  const legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
 
   app.innerHTML = `
     <div class="text-center my-7">
