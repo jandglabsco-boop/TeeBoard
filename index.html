@@ -6,26 +6,129 @@
 <title>TeeBoard</title>
 <meta name="theme-color" content="#0b0f19" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛳</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  .card { background: white; border-radius: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06); }
-  input, select { border: 1px solid #d1d5db; border-radius: .5rem; padding: .6rem .75rem; width: 100%; font-size: 1rem; }
-  button { cursor: pointer; }
-  .btn-primary { background: #2563eb; color: white; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
-  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-  .btn-secondary { background: #e5e7eb; color: #0b0f19; border-radius: .6rem; padding: .7rem 1.2rem; font-weight: 600; }
-  .btn-ghost { color: #2563eb; font-weight: 600; }
-  .score-btn { width: 2.75rem; height: 2.75rem; border-radius: 9999px; font-weight: 700; font-size: 1.1rem; }
-  .search-result:hover { background: #eff6ff; }
+  :root {
+    --ink: #0b0f19;
+    --blue: #3b63ff;
+    --blue-dark: #2040d6;
+    --line: #e7e8f0;
+    --paper: #f6f7fb;
+    --ink-soft: #6b7280;
+  }
+  * { -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: radial-gradient(1100px 520px at 50% -12%, #e9edff 0%, var(--paper) 55%, var(--paper) 100%);
+    background-attachment: fixed;
+  }
+  h1, h2, h3 { letter-spacing: -0.02em; }
+  .brand { font-family: 'Fraunces', serif; letter-spacing: -0.01em; }
+
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 1.35rem;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  }
+
+  input, select {
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    padding: .75rem .9rem;
+    width: 100%;
+    font-size: 1rem;
+    background: #fff;
+    color: var(--ink);
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  input::placeholder { color: #a3a9b8; }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(59,99,255,.14);
+  }
+
+  button { cursor: pointer; font-family: inherit; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #4a72ff, var(--blue-dark));
+    color: white;
+    border-radius: 1rem;
+    padding: .8rem 1.25rem;
+    font-weight: 700;
+    letter-spacing: .01em;
+    box-shadow: 0 8px 18px -8px rgba(32,64,214,.55);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 22px -8px rgba(32,64,214,.6); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-secondary {
+    background: #fff;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    padding: .8rem 1.25rem;
+    font-weight: 700;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn-secondary:hover { background: #f3f4f8; }
+
+  .btn-ghost { color: var(--blue); font-weight: 700; }
+  .btn-ghost:hover { color: var(--blue-dark); }
+
+  .score-btn {
+    width: 3rem; height: 3rem;
+    border-radius: 9999px;
+    font-weight: 800;
+    font-size: 1.2rem;
+    border: 1px solid var(--line);
+    background: #fff;
+    transition: transform .1s ease, background .15s ease;
+  }
+  .score-btn:active { transform: scale(.9); background: #eef1f8; }
+
+  .search-result:hover { background: #f3f5ff; }
+
+  .icon-badge {
+    width: 2.9rem; height: 2.9rem;
+    min-width: 2.9rem;
+    border-radius: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem;
+    background: linear-gradient(135deg, rgba(59,99,255,.14), rgba(59,99,255,.05));
+  }
+
+  .rank-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.8rem; height: 1.8rem; border-radius: 9999px;
+    font-weight: 800; font-size: .78rem;
+    background: #eef1f8; color: var(--ink-soft);
+  }
+  .rank-badge.gold { background: #fbecc4; color: #8a6300; }
+
+  .par-chip {
+    display: inline-block;
+    padding: .2rem .6rem;
+    border-radius: 9999px;
+    font-weight: 800;
+  }
+  .par-chip.under { background: #e8edff; color: var(--blue-dark); }
+  .par-chip.flat { background: #f3f4f8; color: #475569; }
 </style>
 </head>
-<body class="bg-slate-50 min-h-screen text-gray-900">
-  <header class="bg-[#0b0f19] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow">
-    <a href="#/" class="flex items-center gap-2 font-bold text-lg">⛳ TeeBoard</a>
+<body class="min-h-screen text-gray-900">
+  <header class="text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10" style="background: linear-gradient(135deg, #0b0f19 0%, #121a30 65%, #0c1220 100%); border-bottom: 1px solid rgba(255,255,255,.07);">
+    <a href="#/" class="brand flex items-center gap-2 font-semibold text-lg">⛳ TeeBoard</a>
     <div class="flex items-center gap-3">
       <span id="header-sub" class="text-blue-300 text-sm"></span>
       <div id="header-profile"></div>

@@ -177,22 +177,22 @@ async function viewHome() {
   const legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
 
   app.innerHTML = `
-    <div class="text-center my-6">
-      <div class="text-5xl mb-2">⛳</div>
-      <h1 class="text-2xl font-bold text-[#0b0f19]">TeeBoard</h1>
-      <p class="text-gray-500 mt-1">Live scoring for scrambles &amp; small tournaments</p>
+    <div class="text-center my-7">
+      <div class="text-5xl mb-3">⛳</div>
+      <h1 class="brand text-3xl font-semibold text-[#0b0f19]">TeeBoard</h1>
+      <p class="text-gray-500 mt-1.5">Live scoring for scrambles &amp; small tournaments</p>
     </div>
 
     <div class="grid grid-cols-1 gap-3">
-      <a href="#/join" class="card p-5 flex items-center gap-4 hover:shadow-md transition">
-        <span class="text-3xl">🏌️</span>
+      <a href="#/join" class="card p-5 flex items-center gap-4 hover:-translate-y-0.5 transition">
+        <span class="icon-badge">🏌️</span>
         <div>
           <div class="font-bold">Join a Tournament</div>
           <div class="text-sm text-gray-500">Have a code? Enter scores for your team.</div>
         </div>
       </a>
-      <a href="#/create" class="card p-5 flex items-center gap-4 hover:shadow-md transition">
-        <span class="text-3xl">🏆</span>
+      <a href="#/create" class="card p-5 flex items-center gap-4 hover:-translate-y-0.5 transition">
+        <span class="icon-badge">🏆</span>
         <div>
           <div class="font-bold">Create a Tournament</div>
           <div class="text-sm text-gray-500">Set up tonight's scramble and get a join code.</div>
@@ -201,7 +201,7 @@ async function viewHome() {
     </div>
 
     ${teamEntries.length ? `
-      <h2 class="font-bold text-gray-600 text-sm uppercase mt-8 mb-2">My Teams</h2>
+      <h2 class="font-bold text-gray-500 text-xs tracking-wide uppercase mt-8 mb-2">My Teams</h2>
       <div class="grid grid-cols-1 gap-2">
         ${teamEntries.map(([tid, t]) => `
           <a href="#/team/${t.teamId}" class="card p-4 flex items-center justify-between">
@@ -216,7 +216,7 @@ async function viewHome() {
     ` : ""}
 
     ${(owned.length || legacy.length) ? `
-      <h2 class="font-bold text-gray-600 text-sm uppercase mt-8 mb-2">Tournaments I Created</h2>
+      <h2 class="font-bold text-gray-500 text-xs tracking-wide uppercase mt-8 mb-2">Tournaments I Created</h2>
       <div class="grid grid-cols-1 gap-2">
         ${owned.map((t) => `
           <a href="#/admin/${t.id}" class="card p-4 flex items-center justify-between">
@@ -1006,23 +1006,89 @@ function viewJoin(prefillCode) {
   }
 }
 
-function renderTeamStep(tournament) {
+async function renderTeamStep(tournament) {
   const savedName = load("bb_player_name", "");
   const body = document.getElementById("join-body");
   body.innerHTML = `
     <div class="card p-5 mt-4">
       <div class="font-semibold mb-3">${escapeHtml(tournament.name)}</div>
-      <label class="text-sm font-semibold">Your name</label>
-      <input id="player-name" placeholder="Your name" value="${escapeHtml(savedName)}" class="mb-3" />
 
-      <div class="flex gap-2 mb-3">
-        <button id="mode-new" class="btn-secondary flex-1">Create a Team</button>
-        <button id="mode-existing" class="btn-secondary flex-1">Join a Team</button>
+      <label class="text-sm font-semibold">Find your name</label>
+      <input id="name-search" placeholder="Start typing your name…" autocomplete="off" class="mb-2" />
+      <div id="name-search-loading" class="text-xs text-gray-400 mb-2">Loading roster…</div>
+      <div id="name-results" class="flex flex-col gap-2 mb-2"></div>
+      <p id="name-empty-note" class="hidden text-xs text-gray-400 mb-3">Nobody's been added to this tournament yet — ask your organizer, or set up your own team below.</p>
+
+      <button id="toggle-other-options" class="btn-ghost text-xs mb-1">Don't see your name? Use a team code or start a new team &rarr;</button>
+
+      <div id="other-options" class="hidden mt-3 pt-3 border-t border-gray-100">
+        <label class="text-sm font-semibold">Your name</label>
+        <input id="player-name" placeholder="Your name" value="${escapeHtml(savedName)}" class="mb-3" />
+
+        <div class="flex gap-2 mb-3">
+          <button id="mode-new" class="btn-secondary flex-1">Create a Team</button>
+          <button id="mode-existing" class="btn-secondary flex-1">Join a Team</button>
+        </div>
+        <div id="team-mode-body"></div>
       </div>
-      <div id="team-mode-body"></div>
     </div>
   `;
 
+  document.getElementById("toggle-other-options").addEventListener("click", () => {
+    document.getElementById("other-options").classList.toggle("hidden");
+  });
+
+  // ---- Find your name: search the full roster the organizer already set up ----
+  let roster = [];
+  const loadingEl = document.getElementById("name-search-loading");
+  const emptyNote = document.getElementById("name-empty-note");
+  const nameSearch = document.getElementById("name-search");
+  const nameResults = document.getElementById("name-results");
+
+  const { data: rosterData } = await sb
+    .from("team_members")
+    .select("id, player_name, team_id, teams!inner(id, name, join_code, tournament_id)")
+    .eq("teams.tournament_id", tournament.id);
+  roster = rosterData || [];
+  loadingEl.classList.add("hidden");
+  if (!roster.length) emptyNote.classList.remove("hidden");
+
+  function renderNameResults(list) {
+    nameResults.innerHTML = list.map((m) => `
+      <button data-team-id="${escapeHtml(m.team_id)}" data-team-name="${escapeHtml(m.teams.name)}" data-team-code="${escapeHtml(m.teams.join_code)}" data-player-name="${escapeHtml(m.player_name)}" class="card p-3 text-left flex items-center justify-between hover:shadow-md transition">
+        <div>
+          <div class="font-semibold text-sm">${escapeHtml(m.player_name)}</div>
+          <div class="text-xs text-gray-400">${escapeHtml(m.teams.name)}</div>
+        </div>
+        <span class="btn-ghost">Go &rarr;</span>
+      </button>
+    `).join("");
+    nameResults.querySelectorAll("button[data-team-id]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        store("bb_player_name", btn.dataset.playerName);
+        saveMyTeam(tournament.id, {
+          teamId: btn.dataset.teamId,
+          teamName: btn.dataset.teamName,
+          teamCode: btn.dataset.teamCode,
+          tournamentCode: tournament.join_code,
+        });
+        location.hash = `#/team/${btn.dataset.teamId}`;
+      });
+    });
+  }
+
+  nameSearch.addEventListener("input", () => {
+    const q = nameSearch.value.trim().toLowerCase();
+    if (!q) return renderNameResults([]);
+    const matches = roster.filter((m) => m.player_name.toLowerCase().includes(q)).slice(0, 8);
+    if (!matches.length) {
+      nameResults.innerHTML = `<div class="text-xs text-gray-400 p-1">No match yet — keep typing, or use a team code below.</div>`;
+      return;
+    }
+    renderNameResults(matches);
+  });
+
+  // ---- Fallback: team code or brand-new team, for anyone not pre-added ----
   document.getElementById("mode-new").addEventListener("click", () => {
     document.getElementById("team-mode-body").innerHTML = `
       <label class="text-sm font-semibold">Team name</label>
@@ -1221,21 +1287,21 @@ async function viewLeaderboard(tournamentId) {
 
       <div class="card overflow-hidden">
         <table class="w-full text-sm">
-          <thead class="bg-[#0b0f19] text-white">
-            <tr>
-              <th class="p-3 text-left">#</th>
-              <th class="p-3 text-left">Team</th>
-              <th class="p-3 text-right">Score</th>
-              <th class="p-3 text-right">Thru</th>
+          <thead>
+            <tr class="text-xs text-gray-400 uppercase tracking-wide">
+              <th class="p-3 text-left font-semibold"></th>
+              <th class="p-3 text-left font-semibold">Team</th>
+              <th class="p-3 text-right font-semibold">Score</th>
+              <th class="p-3 text-right font-semibold">Thru</th>
             </tr>
           </thead>
           <tbody>
             ${rows.length === 0 ? `<tr><td colspan="4" class="p-4 text-center text-gray-400">No teams yet</td></tr>` : ""}
             ${rows.map((r, i) => `
               <tr class="border-t border-gray-100">
-                <td class="p-3 font-bold text-gray-400">${i + 1}</td>
+                <td class="p-3"><span class="rank-badge${i === 0 && r.thru ? " gold" : ""}">${i + 1}</span></td>
                 <td class="p-3 font-semibold">${escapeHtml(r.name)}</td>
-                <td class="p-3 text-right font-bold ${r.toPar < 0 ? "text-blue-700" : r.toPar > 0 ? "text-gray-700" : "text-gray-500"}">${r.thru ? toParLabel(r.toPar) : "—"}</td>
+                <td class="p-3 text-right">${r.thru ? `<span class="par-chip ${r.toPar < 0 ? "under" : "flat"}">${toParLabel(r.toPar)}</span>` : `<span class="text-gray-300">—</span>`}</td>
                 <td class="p-3 text-right text-gray-500">${r.thru}/${tournament.num_holes}</td>
               </tr>
             `).join("")}
