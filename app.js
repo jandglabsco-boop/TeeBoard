@@ -1367,7 +1367,7 @@ async function viewTeam(teamId) {
       <a href="#/leaderboard/${tournament.id}" class="btn-primary block text-center mb-4">View Live Leaderboard</a>
 
       <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">${isSigned ? "Final Scorecard" : "Enter Scores"}</h2>
-      ${isSigned ? `<p class="text-xs text-gray-400 mb-2"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">3</span> birdie &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">5</span> bogey</p>` : ""}
+      ${isSigned ? `<p class="text-xs text-gray-400 mb-2"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">−1</span> birdie (1 under par) &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">+1</span> bogey (1 over par)</p>` : ""}
       <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
 
       ${!isSigned ? `
@@ -1570,7 +1570,7 @@ async function viewScorecard(teamId) {
         <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
       </div>
 
-      <p class="text-xs text-gray-400 text-center mb-4"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">3</span> birdie &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">5</span> bogey</p>
+      <p class="text-xs text-gray-400 text-center mb-4"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">−1</span> birdie (1 under par) &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">+1</span> bogey (1 over par)</p>
 
       <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
 
