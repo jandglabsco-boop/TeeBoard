@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>TeeBoard</title>
 <meta name="theme-color" content="#0b0f19" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛳</text></svg>" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%22 stop-color=%22%234a72ff%22/><stop offset=%221%22 stop-color=%22%232040d6%22/></linearGradient></defs><rect width=%22100%22 height=%22100%22 rx=%2224%22 fill=%22url(%23g)%22/><line x1=%2232%22 y1=%2218%22 x2=%2232%22 y2=%2282%22 stroke=%22white%22 stroke-width=%227%22 stroke-linecap=%22round%22/><path d=%22M32 22 L74 34 L32 46 Z%22 fill=%22white%22/><ellipse cx=%2232%22 cy=%2284%22 rx=%2220%22 ry=%226%22 fill=%22white%22 opacity=%220.5%22/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
@@ -125,6 +125,18 @@
   .par-chip.under { background: #e8edff; color: var(--blue-dark); }
   .par-chip.flat { background: #f3f4f8; color: #475569; }
 
+  .logo-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    border-radius: .7rem;
+    background: linear-gradient(135deg, #4a72ff, var(--blue-dark));
+    box-shadow: 0 4px 10px -4px rgba(32,64,214,.65);
+  }
+
   .fin-badge {
     display: inline-block;
     padding: .05rem .4rem;
@@ -158,7 +170,16 @@
 </head>
 <body class="min-h-screen text-gray-900">
   <header class="text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10" style="background: linear-gradient(135deg, #0b0f19 0%, #121a30 65%, #0c1220 100%); border-bottom: 1px solid rgba(255,255,255,.07);">
-    <a href="#/" class="brand flex items-center gap-2 font-semibold text-lg">⛳ TeeBoard</a>
+    <a href="#/" class="brand flex items-center gap-2 font-semibold text-lg">
+      <span class="logo-mark">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <line x1="7" y1="3" x2="7" y2="21" stroke="white" stroke-width="2" stroke-linecap="round" />
+          <path d="M7 4 L18 7.5 L7 11 Z" fill="white" />
+          <ellipse cx="7" cy="21.5" rx="5" ry="1.3" fill="white" opacity=".5" />
+        </svg>
+      </span>
+      TeeBoard
+    </a>
     <div class="flex items-center gap-3">
       <span id="header-sub" class="text-blue-300 text-sm"></span>
       <div id="header-profile"></div>

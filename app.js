@@ -65,6 +65,9 @@ function saveMyTournament(t) {
   list.unshift(t);
   store("bb_my_tournaments", list.slice(0, 10));
 }
+function removeMyTournament(id) {
+  store("bb_my_tournaments", myTournaments().filter((x) => x.id !== id));
+}
 
 let realtimeChannel = null;
 function clearRealtime() {
@@ -708,7 +711,18 @@ async function viewAdmin(tournamentId) {
           <div id="csv-status" class="text-xs text-gray-500 mt-2"></div>
         </div>
 
-        <button id="toggle-status" class="btn-secondary w-full">${tournament.status === "active" ? "Close tournament" : "Reopen tournament"}</button>
+        <button id="toggle-status" class="btn-secondary w-full mb-4">${tournament.status === "active" ? "Close tournament" : "Reopen tournament"}</button>
+
+        <div class="card p-4" style="border-color:#fecaca;">
+          <h2 class="font-bold text-red-600 text-xs uppercase tracking-wide mb-2">Danger Zone</h2>
+          <p class="text-xs text-gray-500 mb-3">Deleting a tournament permanently removes all its teams, players, and scores. This can't be undone.</p>
+          <button id="delete-tournament-btn" class="btn-secondary w-full" style="color:#dc2626;border-color:#fecaca;">Delete Tournament</button>
+          <div id="delete-confirm-wrap" class="hidden mt-3 pt-3 border-t border-gray-100">
+            <label class="text-xs font-semibold text-gray-500">Type the tournament name to confirm: <b>${escapeHtml(tournament.name)}</b></label>
+            <input id="delete-confirm-input" placeholder="${escapeHtml(tournament.name)}" class="mb-2" />
+            <button id="delete-confirm-btn" class="w-full" style="background:#dc2626;color:white;border-radius:1rem;padding:.8rem 1.25rem;font-weight:700;">Permanently Delete</button>
+          </div>
+        </div>
       ` : `
         <p class="text-xs text-gray-400 text-center">Only the organizer who created this tournament can manage roster imports and settings.</p>
       `}
@@ -724,6 +738,27 @@ async function viewAdmin(tournamentId) {
     });
 
     if (isOwner) {
+      document.getElementById("delete-tournament-btn").addEventListener("click", () => {
+        document.getElementById("delete-confirm-wrap").classList.toggle("hidden");
+      });
+      document.getElementById("delete-confirm-btn").addEventListener("click", async () => {
+        const val = document.getElementById("delete-confirm-input").value.trim();
+        if (val !== tournament.name) return toast("Type the tournament name exactly to confirm", true);
+        const btn = document.getElementById("delete-confirm-btn");
+        btn.disabled = true;
+        btn.textContent = "Deleting…";
+        const { error } = await sb.from("tournaments").delete().eq("id", tournament.id);
+        if (error) {
+          toast("Couldn't delete: " + error.message, true);
+          btn.disabled = false;
+          btn.textContent = "Permanently Delete";
+          return;
+        }
+        removeMyTournament(tournament.id);
+        toast("Tournament deleted");
+        location.hash = "#/";
+      });
+
       document.getElementById("toggle-status").addEventListener("click", async () => {
         const newStatus = tournament.status === "active" ? "closed" : "active";
         await sb.from("tournaments").update({ status: newStatus }).eq("id", tournament.id);

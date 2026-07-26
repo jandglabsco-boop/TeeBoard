@@ -122,3 +122,13 @@ create policy "public delete team_members" on team_members for delete using (tru
 -- reopen a signed scorecard from the admin panel if needed. Safe to re-run.
 alter table teams add column if not exists signed_at timestamptz;
 alter table teams add column if not exists signed_by text;
+
+-- Lets an organizer permanently delete a tournament (and, via the existing
+-- "on delete cascade" foreign keys, all of its teams/players/scores) from
+-- the admin panel's Danger Zone. Tournaments created before organizer
+-- accounts existed (created_by is null) stay manageable by anyone with the
+-- admin link, same as the update policy's spirit. Safe to re-run.
+drop policy if exists "only owner can delete their tournament" on tournaments;
+create policy "only owner can delete their tournament" on tournaments
+  for delete
+  using (created_by is null or auth.uid() = created_by);
