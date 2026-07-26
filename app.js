@@ -385,8 +385,11 @@ function renderCreateForm(user) {
   }
 
   function updateNineVisibility() {
-    const show = holesSelect.value === "9" && courseScorecard && courseScorecard.totalHoles === 18;
-    nineWrap.classList.toggle("hidden", !show);
+    // Show the front/back picker any time 9 holes is selected — not only
+    // when a course happens to be loaded — so it's never hidden/missing.
+    // It only changes the actual par numbers when an 18-hole course card is
+    // loaded; otherwise every hole defaults to par 4 either way.
+    nineWrap.classList.toggle("hidden", holesSelect.value !== "9");
   }
 
   function getCurrentPar() {
@@ -513,7 +516,11 @@ function renderCreateForm(user) {
 
       courseScorecard = { name, totalHoles, par: parArr, summaryPar: course.par || null, website: course.website || null };
 
-      if (String(totalHoles) === "9" || String(totalHoles) === "18") {
+      if (totalHoles === 18 && holesSelect.value === "9") {
+        // The organizer already chose a 9-hole round before searching for
+        // their course — keep that choice instead of silently bumping them
+        // back to 18. They can still pick front/back nine below.
+      } else if (String(totalHoles) === "9" || String(totalHoles) === "18") {
         holesSelect.value = String(totalHoles);
       } else {
         let opt = holesSelect.querySelector(`option[value="${totalHoles}"]`);
@@ -594,6 +601,11 @@ async function viewAdmin(tournamentId) {
   const isOwner = !tournament.created_by || (user && tournament.created_by === user.id);
   saveMyTournament({ id: tournament.id, name: tournament.name, code: tournament.join_code });
 
+  // Which teams currently have their "manage" panel open — kept outside
+  // render() so it survives re-renders (e.g. after adding another player,
+  // the panel you were working in stays open for the next one).
+  const expandedTeams = new Set();
+
   async function render() {
     const { data: teams } = await sb
       .from("teams")
@@ -623,7 +635,9 @@ async function viewAdmin(tournamentId) {
       <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Teams (${(teams || []).length})</h2>
       <div class="grid grid-cols-1 gap-2 mb-4">
         ${(teams || []).length === 0 ? `<div class="card p-4 text-sm text-gray-500">No teams yet — share the join code above.</div>` : ""}
-        ${(teams || []).map((t) => `
+        ${(teams || []).map((t) => {
+          const expanded = expandedTeams.has(t.id);
+          return `
           <div class="card p-4">
             <div class="flex items-center justify-between">
               <div class="font-semibold">${escapeHtml(t.name)}</div>
@@ -631,8 +645,33 @@ async function viewAdmin(tournamentId) {
             </div>
             <div class="text-xs text-gray-500 mt-1">${(t.team_members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "no players yet"}</div>
             <div class="text-xs text-gray-400 mt-1">${(t.scores || []).length}/${tournament.num_holes} holes entered</div>
+            ${isOwner ? `
+              <button data-manage-team="${escapeHtml(t.id)}" class="btn-ghost text-xs mt-2">${expanded ? "Hide" : "Edit team"}</button>
+              <div class="${expanded ? "" : "hidden"} mt-3 pt-3 border-t border-gray-100">
+                <label class="text-xs font-semibold text-gray-500">Team name</label>
+                <div class="flex gap-2 mb-3">
+                  <input data-rename-input="${escapeHtml(t.id)}" value="${escapeHtml(t.name)}" class="flex-1" />
+                  <button data-rename-btn="${escapeHtml(t.id)}" class="btn-secondary">Save</button>
+                </div>
+                ${(t.team_members || []).length ? `
+                  <div class="flex flex-col gap-1 mb-3">
+                    ${(t.team_members || []).map((m) => `
+                      <div class="flex items-center justify-between text-sm bg-gray-50 rounded px-2 py-1">
+                        <span>${escapeHtml(m.player_name)}</span>
+                        <button data-remove-member="${escapeHtml(m.id)}" class="text-red-500 text-xs font-bold">Remove</button>
+                      </div>
+                    `).join("")}
+                  </div>
+                ` : ""}
+                <label class="text-xs font-semibold text-gray-500">Add player</label>
+                <div class="flex gap-2">
+                  <input data-quick-add-input="${escapeHtml(t.id)}" placeholder="Player name" class="flex-1" />
+                  <button data-quick-add-btn="${escapeHtml(t.id)}" class="btn-primary">Add</button>
+                </div>
+              </div>
+            ` : ""}
           </div>
-        `).join("")}
+        `; }).join("")}
       </div>
 
       ${isOwner ? `
@@ -727,6 +766,58 @@ async function viewAdmin(tournamentId) {
         }
         toast(`Added ${playerName}${teamChoice === "__new" ? ` to new team "${newTeamName}"` : ""}`);
         render();
+      });
+
+      app.querySelectorAll("[data-manage-team]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.manageTeam;
+          if (expandedTeams.has(id)) expandedTeams.delete(id);
+          else expandedTeams.add(id);
+          render();
+        });
+      });
+
+      app.querySelectorAll("[data-rename-btn]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.renameBtn;
+          const input = app.querySelector(`[data-rename-input="${id}"]`);
+          const newName = input.value.trim();
+          if (!newName) return toast("Enter a team name", true);
+          btn.disabled = true;
+          const { error } = await sb.from("teams").update({ name: newName }).eq("id", id);
+          btn.disabled = false;
+          if (error) return toast("Couldn't rename team: " + error.message, true);
+          toast("Team renamed");
+          render();
+        });
+      });
+
+      app.querySelectorAll("[data-remove-member]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.removeMember;
+          btn.disabled = true;
+          const { error } = await sb.from("team_members").delete().eq("id", id);
+          if (error) {
+            btn.disabled = false;
+            return toast("Couldn't remove player: " + error.message, true);
+          }
+          render();
+        });
+      });
+
+      app.querySelectorAll("[data-quick-add-btn]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.quickAddBtn;
+          const input = app.querySelector(`[data-quick-add-input="${id}"]`);
+          const playerName = input.value.trim();
+          if (!playerName) return toast("Enter a player name", true);
+          btn.disabled = true;
+          const { error } = await sb.from("team_members").insert({ team_id: id, player_name: playerName });
+          btn.disabled = false;
+          if (error) return toast("Couldn't add player: " + error.message, true);
+          expandedTeams.add(id); // keep this team's panel open so you can keep adding players
+          render();
+        });
       });
     }
   }

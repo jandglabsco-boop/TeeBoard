@@ -75,6 +75,7 @@ create policy "public update teams" on teams for update using (true);
 
 create policy "public read team_members" on team_members for select using (true);
 create policy "public insert team_members" on team_members for insert with check (true);
+create policy "public delete team_members" on team_members for delete using (true);
 
 create policy "public read scores" on scores for select using (true);
 create policy "public insert scores" on scores for insert with check (true);
@@ -110,3 +111,8 @@ create policy "only owner can update their tournament" on tournaments
 -- Note: any tournaments created before this migration have created_by = null.
 -- TeeBoard's app code treats those as manageable by anyone with the admin
 -- link (same as before), so nothing breaks for existing tournaments.
+
+-- Lets organizers remove a player from the admin "Edit team" panel. Safe to
+-- re-run.
+drop policy if exists "public delete team_members" on team_members;
+create policy "public delete team_members" on team_members for delete using (true);
