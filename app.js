@@ -343,7 +343,7 @@ function renderCreateForm(user) {
         <label class="text-sm font-semibold">Course</label>
         <input id="course-input" name="course" placeholder="Search for your course… e.g. Pine Valley" autocomplete="off" />
         <div id="course-results" class="hidden absolute z-20 left-0 right-0 mt-1 card max-h-64 overflow-y-auto"></div>
-        <p id="course-attribution" class="text-xs text-gray-400 mt-1">Search pulls real course data (holes &amp; par) from <a href="https://opengolfapi.org" target="_blank" class="underline">OpenGolfAPI</a>, free &amp; open (ODbL). Can't find your course? Just type its name and enter par manually below.</p>
+        <p id="course-attribution" class="text-xs text-gray-400 mt-1">Search pulls real course data (holes &amp; par) from <a href="https://opengolfapi.org" target="_blank" class="underline">OpenGolfAPI</a>, free &amp; open (ODbL). Can't find your course? That's okay — every hole will default to par 4.</p>
         <p id="course-selected-note" class="hidden text-xs text-blue-700 font-semibold mt-1"></p>
       </div>
       <div>
@@ -353,10 +353,12 @@ function renderCreateForm(user) {
           <option value="9">9 holes</option>
         </select>
       </div>
-      <div>
-        <label class="text-sm font-semibold">Par per hole (optional)</label>
-        <input id="par-input" name="par" placeholder="e.g. 4,4,3,5,4,3,4,5,4,4,4,3,5,4,4,3,4,5" />
-        <p class="text-xs text-gray-500 mt-1">Comma-separated, one per hole. Leave blank to default every hole to par 4, or pick a course above to fill this in automatically.</p>
+      <div id="nine-wrap" class="hidden">
+        <label class="text-sm font-semibold">Which nine?</label>
+        <select id="nine-select" name="nine">
+          <option value="front">Front nine (holes 1–9)</option>
+          <option value="back">Back nine (holes 10–18)</option>
+        </select>
       </div>
       <button class="btn-primary" type="submit">Create &amp; Get Code</button>
     </form>
@@ -365,20 +367,67 @@ function renderCreateForm(user) {
   const courseInput = document.getElementById("course-input");
   const resultsBox = document.getElementById("course-results");
   const holesSelect = document.getElementById("holes-select");
-  const parInput = document.getElementById("par-input");
+  const nineWrap = document.getElementById("nine-wrap");
+  const nineSelect = document.getElementById("nine-select");
   const selectedNote = document.getElementById("course-selected-note");
 
   let debounceId = null;
   let searchToken = 0;
+  // Holds the full scorecard fetched for the currently-selected course, if
+  // any: { name, totalHoles, par: [...], summaryPar, website }. Par is no
+  // longer editable as raw text — it's always derived from this (or defaults
+  // to par 4 everywhere), based on the Holes / Which-nine selections below.
+  let courseScorecard = null;
 
   function hideResults() {
     resultsBox.classList.add("hidden");
     resultsBox.innerHTML = "";
   }
 
+  function updateNineVisibility() {
+    const show = holesSelect.value === "9" && courseScorecard && courseScorecard.totalHoles === 18;
+    nineWrap.classList.toggle("hidden", !show);
+  }
+
+  function getCurrentPar() {
+    const numHoles = parseInt(holesSelect.value, 10);
+    if (courseScorecard) {
+      if (courseScorecard.totalHoles === numHoles) return courseScorecard.par.slice();
+      if (numHoles === 9 && courseScorecard.totalHoles === 18) {
+        return nineSelect.value === "back" ? courseScorecard.par.slice(9, 18) : courseScorecard.par.slice(0, 9);
+      }
+    }
+    return Array(numHoles).fill(4);
+  }
+
+  function refreshNoteForSelection() {
+    if (!courseScorecard) return;
+    const { name, totalHoles, par: fullPar, summaryPar, website } = courseScorecard;
+    const numHoles = parseInt(holesSelect.value, 10);
+    let label;
+    if (totalHoles === numHoles) {
+      label = `${numHoles} holes`;
+    } else if (numHoles === 9 && totalHoles === 18) {
+      label = nineSelect.value === "back" ? "back nine (holes 10–18)" : "front nine (holes 1–9)";
+    } else {
+      label = `${numHoles} holes (this course's card on file has ${totalHoles} — the rest default to par 4)`;
+    }
+    const usedPar = getCurrentPar();
+    const totalPar = usedPar.reduce((a, b) => a + b, 0);
+    const fullTotalPar = fullPar.reduce((a, b) => a + b, 0);
+    const mismatchWarning = (summaryPar && totalHoles === fullPar.length && summaryPar !== fullTotalPar)
+      ? ` Heads up: OpenGolfAPI's summary lists par ${summaryPar} for this course overall, which doesn't match the full card's total of ${fullTotalPar} — double check the numbers before sharing the join code.`
+      : "";
+    const siteLink = website ? ` <a href="${escapeHtml(website)}" target="_blank" class="underline">${escapeHtml(name)}'s site</a> ·` : "";
+    selectedNote.innerHTML = `✓ Using ${escapeHtml(name)}'s ${escapeHtml(label)}, par ${totalPar}.${siteLink}${escapeHtml(mismatchWarning)}`;
+    selectedNote.classList.remove("hidden");
+  }
+
   function clearSelection() {
     selectedNote.classList.add("hidden");
     selectedNote.textContent = "";
+    courseScorecard = null;
+    updateNineVisibility();
   }
 
   courseInput.addEventListener("input", () => {
@@ -391,6 +440,12 @@ function renderCreateForm(user) {
 
   courseInput.addEventListener("blur", () => setTimeout(hideResults, 150));
 
+  holesSelect.addEventListener("change", () => {
+    updateNineVisibility();
+    refreshNoteForSelection();
+  });
+  nineSelect.addEventListener("change", refreshNoteForSelection);
+
   async function runSearch(q) {
     const myToken = ++searchToken;
     try {
@@ -400,7 +455,7 @@ function renderCreateForm(user) {
       const data = await res.json();
       const courses = (data.courses || []).slice(0, 8);
       if (!courses.length) {
-        resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">No matches — you can still type the name and enter par manually.</div>`;
+        resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">No matches — that's okay, every hole will default to par 4.</div>`;
         resultsBox.classList.remove("hidden");
         return;
       }
@@ -419,7 +474,7 @@ function renderCreateForm(user) {
       });
     } catch {
       if (myToken !== searchToken) return;
-      resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">Couldn't reach course search right now — type the name and enter par manually.</div>`;
+      resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">Couldn't reach course search right now — that's okay, every hole will default to par 4.</div>`;
       resultsBox.classList.remove("hidden");
     }
   }
@@ -433,7 +488,9 @@ function renderCreateForm(user) {
       const course = await res.json();
       const rawScorecard = course.scorecard || [];
       if (!rawScorecard.length) {
-        selectedNote.textContent = `Found ${name}, but no hole-by-hole scorecard on file — enter par manually.`;
+        courseScorecard = null;
+        updateNineVisibility();
+        selectedNote.textContent = `Found ${name}, but no hole-by-hole scorecard on file — every hole will default to par 4.`;
         selectedNote.classList.remove("hidden");
         return;
       }
@@ -452,31 +509,29 @@ function renderCreateForm(user) {
       // overall whose scorecard array actually sums to 72). Using the summary
       // number here used to cause the par-count check on submit to silently
       // discard the fetched card and fall back to a flat par 4 on every hole.
-      const holes = parArr.length;
-      const totalPar = parArr.reduce((a, b) => a + b, 0);
+      const totalHoles = parArr.length;
 
-      if (String(holes) === "9" || String(holes) === "18") {
-        holesSelect.value = String(holes);
+      courseScorecard = { name, totalHoles, par: parArr, summaryPar: course.par || null, website: course.website || null };
+
+      if (String(totalHoles) === "9" || String(totalHoles) === "18") {
+        holesSelect.value = String(totalHoles);
       } else {
-        let opt = holesSelect.querySelector(`option[value="${holes}"]`);
+        let opt = holesSelect.querySelector(`option[value="${totalHoles}"]`);
         if (!opt) {
           opt = document.createElement("option");
-          opt.value = String(holes);
-          opt.textContent = `${holes} holes`;
+          opt.value = String(totalHoles);
+          opt.textContent = `${totalHoles} holes`;
           holesSelect.appendChild(opt);
         }
-        holesSelect.value = String(holes);
+        holesSelect.value = String(totalHoles);
       }
-      parInput.value = parArr.join(",");
-
-      const mismatchWarning = (course.par && course.par !== totalPar)
-        ? ` Heads up: OpenGolfAPI's summary lists par ${course.par} for this course overall, which doesn't match this card's total of ${totalPar} — double check the numbers below against your scorecard before sharing the join code.`
-        : " Double check the numbers below against your scorecard before sharing the join code.";
-      const siteLink = course.website ? ` <a href="${escapeHtml(course.website)}" target="_blank" class="underline">${escapeHtml(name)}'s site</a> ·` : "";
-      selectedNote.innerHTML = `✓ Using ${escapeHtml(name)}'s scorecard on file (${holes} holes, par ${totalPar}).${siteLink}${escapeHtml(mismatchWarning)}`;
-      selectedNote.classList.remove("hidden");
+      nineSelect.value = "front";
+      updateNineVisibility();
+      refreshNoteForSelection();
     } catch {
-      selectedNote.textContent = `Found ${name}, but couldn't load its scorecard — enter par manually.`;
+      courseScorecard = null;
+      updateNineVisibility();
+      selectedNote.textContent = `Found ${name}, but couldn't load its scorecard — every hole will default to par 4.`;
       selectedNote.classList.remove("hidden");
     }
   }
@@ -487,12 +542,7 @@ function renderCreateForm(user) {
     const name = fd.get("name").trim();
     const course = fd.get("course").trim();
     const numHoles = parseInt(fd.get("holes"), 10);
-    let par = [];
-    const parRaw = fd.get("par").trim();
-    if (parRaw) {
-      par = parRaw.split(",").map((p) => parseInt(p.trim(), 10)).filter((p) => !isNaN(p));
-    }
-    if (par.length !== numHoles) par = Array(numHoles).fill(4);
+    const par = getCurrentPar();
 
     const btn = e.target.querySelector("button");
     btn.disabled = true;
@@ -587,6 +637,23 @@ async function viewAdmin(tournamentId) {
 
       ${isOwner ? `
         <div class="card p-4 mb-4">
+          <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Add a Player</h2>
+          <p class="text-xs text-gray-500 mb-2">Add one person at a time — to an existing team, or a brand new one.</p>
+          <label class="text-sm font-semibold">Team</label>
+          <select id="add-team-select" class="mb-2">
+            <option value="__new">+ New team</option>
+            ${(teams || []).map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join("")}
+          </select>
+          <div id="new-team-name-wrap" class="mb-2">
+            <input id="new-team-name" placeholder="New team name, e.g. The Duffers" />
+          </div>
+          <label class="text-sm font-semibold">Player name</label>
+          <input id="add-player-name" placeholder="Player name" class="mb-3" />
+          <button id="add-player-btn" class="btn-primary w-full">Add Player</button>
+          <div id="add-player-status" class="text-xs mt-2"></div>
+        </div>
+
+        <div class="card p-4 mb-4">
           <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Import Roster (CSV)</h2>
           <p class="text-xs text-gray-500 mb-2">
             Columns: <code class="bg-gray-100 px-1 rounded">team</code>, <code class="bg-gray-100 px-1 rounded">player</code>.
@@ -621,7 +688,71 @@ async function viewAdmin(tournamentId) {
         if (file) await importRosterCsv(file);
         e.target.value = "";
       });
+
+      const addTeamSelect = document.getElementById("add-team-select");
+      const newTeamWrap = document.getElementById("new-team-name-wrap");
+      const updateNewTeamWrap = () => newTeamWrap.classList.toggle("hidden", addTeamSelect.value !== "__new");
+      updateNewTeamWrap();
+      addTeamSelect.addEventListener("change", updateNewTeamWrap);
+
+      document.getElementById("add-player-btn").addEventListener("click", async () => {
+        const teamChoice = addTeamSelect.value;
+        const newTeamName = document.getElementById("new-team-name").value.trim();
+        const playerName = document.getElementById("add-player-name").value.trim();
+        const statusEl = document.getElementById("add-player-status");
+        const btn = document.getElementById("add-player-btn");
+
+        if (!playerName) {
+          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.textContent = "Enter a player name.";
+          return;
+        }
+        if (teamChoice === "__new" && !newTeamName) {
+          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.textContent = "Enter a team name.";
+          return;
+        }
+
+        btn.disabled = true;
+        statusEl.className = "text-xs mt-2 text-gray-500";
+        statusEl.textContent = "Adding…";
+
+        const result = await addPlayerManually(teamChoice, newTeamName, playerName);
+
+        btn.disabled = false;
+        if (result.error) {
+          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.textContent = result.error;
+          return;
+        }
+        toast(`Added ${playerName}${teamChoice === "__new" ? ` to new team "${newTeamName}"` : ""}`);
+        render();
+      });
     }
+  }
+
+  // Lets the organizer add a single player directly, without a CSV — either
+  // onto an existing team or a brand new one.
+  async function addPlayerManually(teamChoice, newTeamName, playerName) {
+    let teamId = teamChoice;
+    if (teamChoice === "__new") {
+      let created = null;
+      for (let attempt = 0; attempt < 6 && !created; attempt++) {
+        const code = genCode(4);
+        const { data, error: teamErr } = await sb
+          .from("teams")
+          .insert({ tournament_id: tournamentId, name: newTeamName, join_code: code })
+          .select()
+          .single();
+        if (data) created = data;
+        else if (teamErr && teamErr.code !== "23505") return { error: teamErr.message };
+      }
+      if (!created) return { error: "Couldn't create team, try again." };
+      teamId = created.id;
+    }
+    const { error: memberErr } = await sb.from("team_members").insert({ team_id: teamId, player_name: playerName });
+    if (memberErr) return { error: memberErr.message };
+    return { ok: true };
   }
 
   function findColumn(fields, candidates) {
