@@ -27,6 +27,19 @@ function toParLabel(toPar) {
   return toPar > 0 ? `+${toPar}` : `${toPar}`;
 }
 
+// Classic scorecard marks: circle a birdie (double-circle an eagle+), square
+// a bogey (double-square a double-bogey+). Used anywhere a hole's strokes
+// are shown read-only.
+function holeMarkClass(strokes, par) {
+  if (strokes == null || !par) return "";
+  const diff = strokes - par;
+  if (diff <= -2) return "eagle";
+  if (diff === -1) return "birdie";
+  if (diff === 1) return "bogey";
+  if (diff >= 2) return "double-bogey";
+  return "";
+}
+
 function toast(msg, isError) {
   let t = document.createElement("div");
   t.textContent = msg;
@@ -130,6 +143,7 @@ const routes = [
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
   { re: /^#\/leaderboard\/([0-9a-fA-F-]+)$/, view: (m) => viewLeaderboard(m[1]) },
+  { re: /^#\/scorecard\/([0-9a-fA-F-]+)$/, view: (m) => viewScorecard(m[1]) },
 ];
 
 function route() {
@@ -1260,7 +1274,7 @@ async function viewTeam(teamId) {
                 <tr class="border-t border-gray-100">
                   <td class="p-2">${i + 1}</td>
                   <td class="p-2 text-right text-gray-400">${p}</td>
-                  <td class="p-2 text-right font-semibold">${scoreMap[i + 1] ?? "—"}</td>
+                  <td class="p-2 text-right"><span class="hole-mark hole-mark-sm ${holeMarkClass(scoreMap[i + 1], p)}" style="margin-left:auto;">${scoreMap[i + 1] ?? "—"}</span></td>
                 </tr>
               `).join("")}
               <tr class="border-t border-gray-200 font-bold">
@@ -1315,7 +1329,7 @@ async function viewTeam(teamId) {
             <div class="font-bold">Hole ${h}</div>
             <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
           </div>
-          <div class="text-lg font-bold w-16 text-center">${val || "—"}</div>
+          <div class="hole-mark ${holeMarkClass(scoreMap[h], par[h - 1])}">${val || "—"}</div>
         </div>` : `
         <div class="card p-3 flex items-center justify-between">
           <div>
@@ -1353,6 +1367,7 @@ async function viewTeam(teamId) {
       <a href="#/leaderboard/${tournament.id}" class="btn-primary block text-center mb-4">View Live Leaderboard</a>
 
       <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">${isSigned ? "Final Scorecard" : "Enter Scores"}</h2>
+      ${isSigned ? `<p class="text-xs text-gray-400 mb-2"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">3</span> birdie &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">5</span> bogey</p>` : ""}
       <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
 
       ${!isSigned ? `
@@ -1421,7 +1436,7 @@ async function viewLeaderboard(tournamentId) {
   async function render() {
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, signed_at, scores(hole_number, strokes)")
+      .select("id, name, signed_at, team_members(player_name), scores(hole_number, strokes)")
       .eq("tournament_id", tournamentId);
 
     const rows = (teams || []).map((t) => {
@@ -1431,7 +1446,14 @@ async function viewLeaderboard(tournamentId) {
         parSum += par[s.hole_number - 1] ?? 4;
         thru++;
       });
-      return { name: t.name, strokes, thru, toPar: strokes - parSum, signed: !!t.signed_at };
+      return {
+        id: t.id,
+        name: t.name,
+        players: (t.team_members || []).map((m) => m.player_name),
+        strokes, thru,
+        toPar: strokes - parSum,
+        signed: !!t.signed_at,
+      };
     });
 
     rows.sort((a, b) => (a.thru === 0 ? 1 : 0) - (b.thru === 0 ? 1 : 0) || a.toPar - b.toPar || b.thru - a.thru);
@@ -1454,10 +1476,14 @@ async function viewLeaderboard(tournamentId) {
             ${rows.length === 0 ? `<tr><td colspan="4" class="p-4 text-center text-gray-400">No teams yet</td></tr>` : ""}
             ${rows.map((r, i) => `
               <tr class="border-t border-gray-100">
-                <td class="p-3"><span class="rank-badge${i === 0 && r.thru ? " gold" : ""}">${i + 1}</span></td>
-                <td class="p-3 font-semibold">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed & submitted">F</span>` : ""}</td>
-                <td class="p-3 text-right">${r.thru ? `<span class="par-chip ${r.toPar < 0 ? "under" : "flat"}">${toParLabel(r.toPar)}</span>` : `<span class="text-gray-300">—</span>`}</td>
-                <td class="p-3 text-right text-gray-500">${r.thru}/${tournament.num_holes}</td>
+                <td class="p-3 align-top"><span class="rank-badge${i === 0 && r.thru ? " gold" : ""}">${i + 1}</span></td>
+                <td class="p-3 align-top">
+                  <div class="font-semibold">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed & submitted">F</span>` : ""}</div>
+                  ${r.players.length ? `<div class="text-xs text-gray-400 mt-0.5">${escapeHtml(r.players.join(", "))}</div>` : ""}
+                  <a href="#/scorecard/${r.id}" class="btn-ghost text-xs mt-1 inline-block">View scorecard &rarr;</a>
+                </td>
+                <td class="p-3 text-right align-top">${r.thru ? `<span class="par-chip ${r.toPar < 0 ? "under" : "flat"}">${toParLabel(r.toPar)}</span>` : `<span class="text-gray-300">—</span>`}</td>
+                <td class="p-3 text-right text-gray-500 align-top">${r.thru}/${tournament.num_holes}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -1479,4 +1505,83 @@ async function viewLeaderboard(tournamentId) {
   const pollId = setInterval(render, 15000);
   const stop = () => { clearInterval(pollId); window.removeEventListener("hashchange", stop); };
   window.addEventListener("hashchange", stop, { once: true });
+}
+
+// ---------- READ-ONLY SCORECARD (from the leaderboard's "View scorecard") ----------
+
+async function viewScorecard(teamId) {
+  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+
+  const { data: team, error } = await sb
+    .from("teams")
+    .select("*, tournaments(*), team_members(player_name)")
+    .eq("id", teamId)
+    .single();
+  if (error || !team) {
+    app.innerHTML = `<div class="card p-5 mt-6">Team not found.</div>`;
+    return;
+  }
+  const tournament = team.tournaments;
+  const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
+
+  async function render() {
+    const { data: scores } = await sb.from("scores").select("hole_number, strokes").eq("team_id", teamId);
+    const scoreMap = {};
+    (scores || []).forEach((s) => (scoreMap[s.hole_number] = s.strokes));
+
+    let totalStrokes = 0, totalPar = 0, thru = 0;
+    for (let h = 1; h <= tournament.num_holes; h++) {
+      if (scoreMap[h] != null) {
+        totalStrokes += scoreMap[h];
+        totalPar += par[h - 1];
+        thru++;
+      }
+    }
+    const toPar = totalStrokes - totalPar;
+
+    let holesHtml = "";
+    for (let h = 1; h <= tournament.num_holes; h++) {
+      holesHtml += `
+        <div class="card p-3 flex items-center justify-between">
+          <div>
+            <div class="font-bold">Hole ${h}</div>
+            <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
+          </div>
+          <div class="hole-mark ${holeMarkClass(scoreMap[h], par[h - 1])}">${scoreMap[h] ?? "—"}</div>
+        </div>`;
+    }
+
+    app.innerHTML = `
+      <div class="mb-3">
+        <h1 class="text-xl font-bold">${escapeHtml(team.name)}</h1>
+        <p class="text-sm text-gray-500">${escapeHtml(tournament.name)}</p>
+        <p class="text-xs text-gray-400">Players: ${(team.team_members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "—"}</p>
+      </div>
+
+      ${team.signed_at ? `
+        <div class="card p-3 mb-4 text-center" style="background:#f0fdf4;border-color:#bbf7d0;">
+          <div class="text-sm font-bold text-green-700">✓ Signed by ${escapeHtml(team.signed_by || "")}</div>
+        </div>
+      ` : ""}
+
+      <div class="card p-4 flex items-center justify-around text-center mb-3">
+        <div><div class="text-2xl font-black text-blue-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
+        <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
+        <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
+      </div>
+
+      <p class="text-xs text-gray-400 text-center mb-4"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">3</span> birdie &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">5</span> bogey</p>
+
+      <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
+
+      <a href="#/leaderboard/${tournament.id}" class="btn-secondary block text-center">Back to Leaderboard</a>
+    `;
+  }
+
+  await render();
+
+  realtimeChannel = sb
+    .channel(`scorecard-${teamId}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "scores", filter: `team_id=eq.${teamId}` }, render)
+    .subscribe();
 }

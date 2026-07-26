@@ -137,6 +137,26 @@
     box-shadow: 0 4px 10px -4px rgba(32,64,214,.65);
   }
 
+  .hole-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.4rem;
+    height: 2.4rem;
+    min-width: 2.4rem;
+    font-weight: 800;
+    font-size: 1.05rem;
+    border-radius: 9999px;
+    background: #f3f4f8;
+    color: var(--ink);
+    border: 2.5px solid transparent;
+  }
+  .hole-mark.birdie { background: transparent; border-color: var(--blue-dark); color: var(--blue-dark); }
+  .hole-mark.eagle { background: transparent; border-color: var(--blue-dark); color: var(--blue-dark); outline: 2px solid var(--blue-dark); outline-offset: 2px; }
+  .hole-mark.bogey { background: transparent; border-radius: .55rem; border-color: #475569; color: #475569; }
+  .hole-mark.double-bogey { background: transparent; border-radius: .55rem; border-color: #475569; color: #475569; outline: 2px solid #475569; outline-offset: 2px; }
+  .hole-mark-sm { width: 1.9rem; height: 1.9rem; min-width: 1.9rem; font-size: .85rem; }
+
   .fin-badge {
     display: inline-block;
     padding: .05rem .4rem;
