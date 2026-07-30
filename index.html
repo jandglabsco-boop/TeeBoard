@@ -2,181 +2,506 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <title>TeeBoard</title>
-<meta name="theme-color" content="#101c15" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><path d=%22M20 92 Q50 82 80 92%22 stroke=%22%232fa84f%22 stroke-width=%225%22 stroke-linecap=%22round%22 fill=%22none%22/><path d=%22M42 66 L58 66 L52 88 L48 88 Z%22 fill=%22%2316231d%22/><circle cx=%2250%22 cy=%2217%22 r=%227%22 fill=%22none%22 stroke=%22%2316231d%22 stroke-width=%224%22/><rect x=%2214%22 y=%2220%22 width=%2272%22 height=%2246%22 rx=%229%22 fill=%22%23ffffff%22 stroke=%22%2316231d%22 stroke-width=%224%22/><line x1=%2214%22 y1=%2235%22 x2=%2286%22 y2=%2235%22 stroke=%22%2316231d%22 stroke-width=%222.5%22/><line x1=%2214%22 y1=%2250%22 x2=%2286%22 y2=%2250%22 stroke=%22%2316231d%22 stroke-width=%222.5%22/><circle cx=%2260%22 cy=%2258%22 r=%226.5%22 fill=%22none%22 stroke=%22%232fa84f%22 stroke-width=%223%22/></svg>" />
+<meta name="theme-color" content="#0A130E" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%230A130E%22/><path d=%22M38 76 L38 24 L72 33 L38 42%22 fill=%22%232FA84F%22/><rect x=%2233%22 y=%2222%22 width=%227%22 height=%2256%22 rx=%223.5%22 fill=%22%23ffffff%22/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
+  /* ============================================================
+     TeeBoard — "tour broadcast" design system
+     Dark chrome + condensed numerals for anything scoreboard-ish,
+     light high-contrast surfaces for anything you read or tap in
+     direct sunlight on a course.
+     ============================================================ */
   :root {
-    /* --blue/--blue-dark names are historical; the accent is now the
-       brand green from the TeeBoard logo. Kept the variable names to
-       avoid touching every rule that references them. */
-    --ink: #16231d;
-    --blue: #2fa84f;
-    --blue-dark: #1c7a3a;
-    --line: #e7e8f0;
-    --paper: #f6f7fb;
-    --ink-soft: #6b7280;
-  }
-  * { -webkit-tap-highlight-color: transparent; }
-  body {
-    font-family: 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    background: radial-gradient(1100px 520px at 50% -12%, #e9f7ec 0%, var(--paper) 55%, var(--paper) 100%);
-    background-attachment: fixed;
-  }
-  h1, h2, h3 { letter-spacing: -0.02em; }
-  .brand { font-family: 'Fraunces', serif; letter-spacing: -0.01em; }
+    /* dark chrome */
+    --ink-900: #08110C;
+    --ink-800: #0D1A13;
+    --ink-700: #16261D;
+    --ink-600: #22382C;
 
-  .wordmark { font-family: 'Manrope', sans-serif; font-weight: 800; letter-spacing: .02em; }
-  .wordmark .wm-tee { color: var(--blue); }
+    /* light surfaces + text */
+    --paper:   #F2F5F1;
+    --surface: #FFFFFF;
+    --ink:     #0E1A14;
+    --ink-2:   #55665D;
+    --ink-3:   #84948C;
+    --line:    #E2E8E3;
+    --line-2:  #CBD6CE;
+
+    /* brand green, derived from the TeeBoard flag mark */
+    --grass-100: #E7F6EB;
+    --grass-200: #C4E9CF;
+    --grass-400: #4CCB78;
+    --grass-500: #2FA84F;
+    --grass-600: #23883F;
+    --grass-700: #1B6C33;
+
+    /* scoring semantics — under par is red, the way every
+       golf broadcast has shown it for fifty years */
+    --under: #D6252B;
+    --gold:  #D6A419;
+
+    --radius:    14px;
+    --radius-sm: 10px;
+  }
+
+  * { -webkit-tap-highlight-color: transparent; }
+
+  html { background: var(--ink-900); }
+
+  body {
+    font-family: 'Archivo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    background: var(--paper);
+  }
+
+  /* ---------- typography ---------- */
+
+  h1, h2, h3 { letter-spacing: -0.02em; font-weight: 700; }
+
+  /* Condensed caps — scoreboard graphics, section labels, big numbers */
+  .display {
+    font-family: 'Barlow Condensed', 'Archivo Narrow', sans-serif;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 0.95;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+  .num-display {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 0.9;
+  }
+
+  .eyebrow {
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-size: .82rem;
+    letter-spacing: .12em;
+    color: var(--ink-2);
+  }
+  .eyebrow.on-dark { color: rgba(255,255,255,.5); }
+
+  .wordmark {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .015em;
+    line-height: 1;
+  }
+  .wordmark .wm-tee   { color: var(--grass-500); }
   .wordmark .wm-board { color: var(--ink); }
-  .wordmark.on-dark .wm-board { color: #ffffff; }
+  .wordmark.on-dark .wm-board { color: #fff; }
+  .wordmark.on-dark .wm-tee   { color: var(--grass-400); }
+
+  .muted  { color: var(--ink-2); }
+  .muted-2{ color: var(--ink-3); }
+
+  /* ---------- surfaces ---------- */
 
   .card {
-    background: #fff;
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 1.35rem;
-    box-shadow: 0 1px 2px rgba(15,23,42,.04);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(8,17,12,.04);
   }
 
-  input, select {
-    border: 1px solid var(--line);
-    border-radius: .9rem;
-    padding: .75rem .9rem;
+  /* The broadcast block: near-black panel with a green light-bar on top.
+     Used for hero, leaderboard header, live stat strips. */
+  .panel-dark {
+    position: relative;
+    background:
+      radial-gradient(120% 100% at 50% -30%, #1B3226 0%, transparent 60%),
+      linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-dark::before {
+    content: "";
+    position: absolute; inset: 0 0 auto 0; height: 2px;
+    background: linear-gradient(90deg, var(--grass-600), var(--grass-400) 45%, var(--grass-600));
+  }
+  /* faint course-contour texture so the dark isn't a flat slab */
+  .panel-dark::after {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+      repeating-linear-gradient(115deg, rgba(255,255,255,.028) 0 1px, transparent 1px 34px);
+    pointer-events: none;
+  }
+  .panel-dark > * { position: relative; z-index: 1; }
+
+  .hairline { border-top: 1px solid var(--line); }
+
+  /* ---------- buttons ---------- */
+
+  button, .btn { cursor: pointer; font-family: inherit; }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    background: var(--ink-900);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    padding: .85rem 1.25rem;
+    font-weight: 700;
+    font-size: .95rem;
+    letter-spacing: -0.01em;
+    border: 1px solid var(--ink-900);
+    transition: background .15s ease, transform .1s ease, opacity .15s ease;
+  }
+  .btn-primary:hover { background: var(--ink-700); }
+  .btn-primary:active { transform: scale(.985); }
+  .btn-primary:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+
+  .btn-green {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    background: var(--grass-600);
+    color: #fff;
+    border: 1px solid var(--grass-600);
+    border-radius: var(--radius-sm);
+    padding: .85rem 1.25rem;
+    font-weight: 700;
+    font-size: .95rem;
+    transition: background .15s ease, transform .1s ease;
+  }
+  .btn-green:hover { background: var(--grass-700); }
+  .btn-green:active { transform: scale(.985); }
+  .btn-green:disabled { opacity: .35; cursor: not-allowed; }
+
+  .btn-secondary {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius-sm);
+    padding: .85rem 1.25rem;
+    font-weight: 600;
+    font-size: .95rem;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn-secondary:hover { background: #F7F9F7; border-color: var(--ink-3); }
+  .btn-secondary:disabled { opacity: .4; cursor: not-allowed; }
+
+  .btn-ghost {
+    color: var(--grass-700);
+    font-weight: 600;
+    font-size: .85rem;
+    display: inline-flex; align-items: center; gap: .25rem;
+  }
+  .btn-ghost:hover { color: var(--ink); }
+
+  .btn-danger {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #fff; color: var(--under);
+    border: 1px solid #F3C9CA;
+    border-radius: var(--radius-sm);
+    padding: .8rem 1.25rem; font-weight: 700; font-size: .95rem;
+  }
+  .btn-danger:hover { background: #FEF4F4; }
+  .btn-danger-solid {
+    background: var(--under); color: #fff; border: 1px solid var(--under);
+    border-radius: var(--radius-sm); padding: .8rem 1.25rem; font-weight: 700; width: 100%;
+  }
+
+  /* ---------- form fields ---------- */
+
+  label { display: block; }
+  .field-label {
+    display: block;
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-size: .8rem;
+    letter-spacing: .1em;
+    color: var(--ink-2);
+    margin-bottom: .35rem;
+  }
+
+  input, select, textarea {
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius-sm);
+    padding: .75rem .85rem;
     width: 100%;
     font-size: 1rem;
-    background: #fff;
+    font-family: inherit;
+    background: var(--surface);
     color: var(--ink);
     transition: border-color .15s ease, box-shadow .15s ease;
   }
-  input::placeholder { color: #a3a9b8; }
+  input::placeholder { color: #A6B2AC; }
   input:focus, select:focus {
     outline: none;
-    border-color: var(--blue);
-    box-shadow: 0 0 0 3px rgba(47,168,79,.16);
+    border-color: var(--grass-500);
+    box-shadow: 0 0 0 3px rgba(47,168,79,.15);
   }
+  input[type="file"] { padding: .55rem; font-size: .85rem; }
 
-  button { cursor: pointer; font-family: inherit; }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #3fbf63, var(--blue-dark));
-    color: white;
-    border-radius: 1rem;
-    padding: .8rem 1.25rem;
+  /* Big centered code entry — the join-code moment deserves its own look */
+  .code-input {
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase;
+    text-align: center;
     font-weight: 700;
-    letter-spacing: .01em;
-    box-shadow: 0 8px 18px -8px rgba(28,122,58,.55);
-    transition: transform .15s ease, box-shadow .15s ease;
+    font-size: 2.4rem;
+    letter-spacing: .28em;
+    text-indent: .28em;
+    padding: .7rem .5rem;
+    background: var(--paper);
+    border-width: 2px;
   }
-  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 22px -8px rgba(28,122,58,.6); }
-  .btn-primary:active { transform: translateY(0); }
-  .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
 
-  .btn-secondary {
-    background: #fff;
-    color: var(--ink);
+  /* ---------- chips, pills, badges ---------- */
+
+  .pill {
+    display: inline-flex; align-items: center; gap: .35rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-size: .78rem;
+    letter-spacing: .1em;
+    padding: .2rem .5rem .15rem;
+    border-radius: 5px;
+    background: var(--paper);
+    color: var(--ink-2);
     border: 1px solid var(--line);
-    border-radius: 1rem;
-    padding: .8rem 1.25rem;
+  }
+  .pill.on-dark { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); color: rgba(255,255,255,.7); }
+  /* red LIVE bug, the way a broadcast marks a live feed */
+  .pill.live { background: rgba(214,37,43,.12); border-color: rgba(214,37,43,.25); color: #FF6B6B; }
+  /* green = open for entries; distinct from the red live-scoring bug */
+  .pill.open { background: rgba(76,203,120,.13); border-color: rgba(76,203,120,.28); color: var(--grass-400); }
+  .pill.open .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--grass-400); }
+  .pill.live .dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #FF4D4D;
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* score relative to par — red under, ink even/over. Broadcast convention. */
+  .to-par {
+    font-family: 'Barlow Condensed', sans-serif;
     font-weight: 700;
-    transition: background .15s ease, border-color .15s ease;
-  }
-  .btn-secondary:hover { background: #f3f4f8; }
-
-  .btn-ghost { color: var(--blue); font-weight: 700; }
-  .btn-ghost:hover { color: var(--blue-dark); }
-
-  .score-btn {
-    width: 3rem; height: 3rem;
-    border-radius: 9999px;
-    font-weight: 800;
-    font-size: 1.2rem;
-    border: 1px solid var(--line);
-    background: #fff;
-    transition: transform .1s ease, background .15s ease;
-  }
-  .score-btn:active { transform: scale(.9); background: #eaf7ee; }
-
-  .search-result:hover { background: #eefaf1; }
-
-  .icon-badge {
-    width: 2.9rem; height: 2.9rem;
-    min-width: 2.9rem;
-    border-radius: 1rem;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.4rem;
-    background: linear-gradient(135deg, rgba(47,168,79,.16), rgba(47,168,79,.05));
-  }
-
-  .rank-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 1.8rem; height: 1.8rem; border-radius: 9999px;
-    font-weight: 800; font-size: .78rem;
-    background: #eef1f8; color: var(--ink-soft);
-  }
-  .rank-badge.gold { background: #fbecc4; color: #8a6300; }
-
-  .par-chip {
+    font-variant-numeric: tabular-nums;
+    line-height: .9;
     display: inline-block;
-    padding: .2rem .6rem;
-    border-radius: 9999px;
-    font-weight: 800;
   }
-  .par-chip.under { background: #e6f7ea; color: var(--blue-dark); }
-  .par-chip.flat { background: #f3f4f8; color: #475569; }
+  .to-par.under { color: var(--under); }
+  .to-par.even  { color: var(--ink); }
+  .to-par.over  { color: var(--ink-2); }
+  .to-par.on-dark.even { color: #fff; }
+  .to-par.on-dark.over { color: rgba(255,255,255,.65); }
+  .to-par.on-dark.under { color: #FF5A5F; }
 
-  .hole-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.4rem;
-    height: 2.4rem;
-    min-width: 2.4rem;
-    font-weight: 800;
-    font-size: 1.05rem;
-    border-radius: 9999px;
-    background: #f3f4f8;
-    color: var(--ink);
-    border: 2.5px solid transparent;
+  .rank {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.7rem; height: 1.7rem; border-radius: 6px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: .95rem;
+    background: var(--paper); color: var(--ink-2);
+    border: 1px solid var(--line);
   }
-  .hole-mark.birdie { background: transparent; border-color: var(--blue-dark); color: var(--blue-dark); }
-  .hole-mark.eagle { background: transparent; border-color: var(--blue-dark); color: var(--blue-dark); outline: 2px solid var(--blue-dark); outline-offset: 2px; }
-  .hole-mark.bogey { background: transparent; border-radius: .55rem; border-color: #475569; color: #475569; }
-  .hole-mark.double-bogey { background: transparent; border-radius: .55rem; border-color: #475569; color: #475569; outline: 2px solid #475569; outline-offset: 2px; }
-  .hole-mark-sm { width: 1.9rem; height: 1.9rem; min-width: 1.9rem; font-size: .85rem; }
+  .rank.lead {
+    background: linear-gradient(160deg, #F5D97A, var(--gold));
+    color: #4A3400; border-color: #C79512;
+  }
 
   .fin-badge {
-    display: inline-block;
-    padding: .05rem .4rem;
-    border-radius: 9999px;
-    font-weight: 800;
-    font-size: .68rem;
-    background: #dcfce7;
-    color: #15803d;
+    display: inline-flex; align-items: center;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: .72rem; letter-spacing: .08em;
+    padding: .05rem .3rem;
+    border-radius: 4px;
+    background: var(--ink-900); color: #fff;
     vertical-align: middle;
   }
+
+  /* ---------- scorecard marks ---------- */
+  /* Classic card notation: circle a birdie, double-circle an eagle,
+     square a bogey, double-square anything worse. */
+  .hole-mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2.3rem; height: 2.3rem; min-width: 2.3rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 1.15rem;
+    font-variant-numeric: tabular-nums;
+    border-radius: 999px;
+    color: var(--ink);
+    border: 2px solid transparent;
+  }
+  .hole-mark.birdie       { border-color: var(--under); color: var(--under); }
+  .hole-mark.eagle        { border-color: var(--under); color: var(--under); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--under); }
+  .hole-mark.bogey        { border-radius: 5px; border-color: var(--ink-2); color: var(--ink); }
+  .hole-mark.double-bogey { border-radius: 5px; border-color: var(--ink-2); color: var(--ink); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--ink-2); }
+  .hole-mark-sm { width: 1.7rem; height: 1.7rem; min-width: 1.7rem; font-size: .92rem; border-width: 1.5px; }
+
+  /* ---------- score stepper ---------- */
+
+  .step-btn {
+    width: 2.6rem; height: 2.6rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    font-size: 1.35rem; font-weight: 600; line-height: 1;
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    color: var(--ink);
+    transition: transform .08s ease, background .15s ease;
+  }
+  .step-btn:active { transform: scale(.9); background: var(--grass-100); border-color: var(--grass-400); }
+
+  .step-value {
+    width: 3rem; height: 2.6rem;
+    text-align: center;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 1.4rem;
+    font-variant-numeric: tabular-nums;
+    padding: 0; border-radius: 8px;
+    -moz-appearance: textfield;
+  }
+  .step-value::-webkit-outer-spin-button,
+  .step-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* ---------- rows & lists ---------- */
+
+  .row-link {
+    display: flex; align-items: center; gap: .9rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1rem;
+    transition: border-color .15s ease, transform .12s ease, box-shadow .15s ease;
+  }
+  .row-link:hover {
+    border-color: var(--ink-3);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px -10px rgba(8,17,12,.35);
+  }
+
+  .icon-tile {
+    width: 2.75rem; height: 2.75rem; min-width: 2.75rem;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--ink-900);
+    color: var(--grass-400);
+  }
+
+  .search-result { transition: background .12s ease; }
+  .search-result:hover { background: var(--grass-100); }
+
+  /* ---------- leaderboard ---------- */
+
+  .lb-head {
+    display: grid;
+    grid-template-columns: 2rem 1fr 3.4rem 3.2rem;
+    gap: .5rem;
+    align-items: center;
+    padding: .5rem .9rem;
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase; font-weight: 600; font-size: .78rem; letter-spacing: .11em;
+    color: rgba(255,255,255,.45);
+    background: var(--ink-900);
+  }
+  .lb-row {
+    display: grid;
+    grid-template-columns: 2rem 1fr 3.4rem 3.2rem;
+    gap: .5rem;
+    align-items: center;
+    padding: .8rem .9rem;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .lb-row:first-of-type { border-top: none; }
+  .lb-row.leader { background: linear-gradient(90deg, rgba(214,164,25,.09), transparent 60%); }
+
+  /* ---------- scorecard grid (read-only, real card layout) ---------- */
+
+  .card-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .card-grid th, .card-grid td {
+    text-align: center;
+    padding: .38rem 0;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 600;
+    font-size: .95rem;
+    font-variant-numeric: tabular-nums;
+    border-right: 1px solid var(--line);
+  }
+  .card-grid th:last-child, .card-grid td:last-child { border-right: none; }
+  .card-grid thead th {
+    background: var(--ink-900); color: #fff;
+    font-size: .82rem; letter-spacing: .04em;
+    border-right-color: rgba(255,255,255,.1);
+  }
+  .card-grid .lbl {
+    text-align: left; padding-left: .5rem;
+    text-transform: uppercase; letter-spacing: .04em;
+    font-size: .66rem; color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .card-grid thead .lbl { color: rgba(255,255,255,.55); }
+  .card-grid tbody tr { border-top: 1px solid var(--line); }
+  .card-grid tbody tr:first-child { border-top: none; }
+  .card-grid .par-row { color: var(--ink-2); background: #FAFCFA; }
+  .card-grid .tot { background: var(--paper); font-weight: 700; }
+  .card-grid thead .tot { background: var(--ink-700); }
+
+  /* ---------- misc ---------- */
+
+  .skeleton-line {
+    height: 1rem; border-radius: 6px;
+    background: linear-gradient(90deg, var(--line) 25%, #EEF2EE 37%, var(--line) 63%);
+    background-size: 400% 100%;
+    animation: shimmer 1.3s ease infinite;
+  }
+  @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+  .toast {
+    position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%);
+    padding: .7rem 1.1rem; border-radius: 10px;
+    background: var(--ink-900); color: #fff;
+    font-size: .88rem; font-weight: 600;
+    box-shadow: 0 12px 30px -12px rgba(8,17,12,.7);
+    z-index: 60;
+    animation: toast-in .2s ease;
+  }
+  .toast.error { background: var(--under); }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* inline form status lines */
+  .status-err  { color: var(--under); font-weight: 600; }
+  .status-ok   { color: var(--grass-700); font-weight: 600; }
+  .status-info { color: var(--ink-2); }
+
+  a { color: inherit; }
+  .link-underline { text-decoration: underline; text-underline-offset: 2px; }
 
   @media print {
     body * { visibility: hidden; }
     #qr-print-area, #qr-print-area * { visibility: visible; }
     #qr-print-area {
-      position: fixed;
-      inset: 0;
-      margin: 0;
-      border: none;
-      box-shadow: none;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      position: fixed; inset: 0; margin: 0;
+      border: none; box-shadow: none; background: #fff;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       height: 100vh;
     }
     #qr-print-area canvas { margin: 1.5rem auto; }
@@ -184,31 +509,34 @@
   }
 </style>
 </head>
-<body class="min-h-screen text-gray-900">
-  <header class="text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10" style="background: linear-gradient(135deg, #101c15 0%, #16261c 65%, #0e1a13 100%); border-bottom: 1px solid rgba(255,255,255,.07);">
-    <a href="#/" class="wordmark on-dark flex items-center gap-2 text-lg">
-      <svg width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-        <path d="M20 92 Q50 82 80 92" stroke="#2fa84f" stroke-width="5" stroke-linecap="round" fill="none" />
-        <path d="M42 66 L58 66 L52 88 L48 88 Z" fill="#ffffff" />
-        <circle cx="50" cy="17" r="7" fill="none" stroke="#ffffff" stroke-width="4" />
-        <rect x="14" y="20" width="72" height="46" rx="9" fill="none" stroke="#ffffff" stroke-width="4" />
-        <line x1="14" y1="35" x2="86" y2="35" stroke="#ffffff" stroke-width="2.5" />
-        <line x1="14" y1="50" x2="86" y2="50" stroke="#ffffff" stroke-width="2.5" />
-        <circle cx="60" cy="58" r="6.5" fill="none" stroke="#2fa84f" stroke-width="3" />
-      </svg>
-      <span><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></span>
-    </a>
-    <div class="flex items-center gap-3">
-      <span id="header-sub" class="text-green-300 text-sm"></span>
-      <div id="header-profile"></div>
+<body class="min-h-screen">
+
+  <header class="sticky top-0 z-30" style="background: var(--ink-900); border-bottom: 1px solid rgba(255,255,255,.08);">
+    <div class="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
+      <a href="#/" class="flex items-center gap-2.5">
+        <svg width="24" height="24" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M38 24 L74 34 L38 44 Z" fill="#4CCB78" />
+          <rect x="32" y="20" width="6.5" height="60" rx="3.25" fill="#ffffff" />
+          <path d="M18 84 Q50 74 82 84" stroke="#4CCB78" stroke-width="5" stroke-linecap="round" fill="none" opacity=".55" />
+        </svg>
+        <span class="wordmark on-dark text-xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></span>
+      </a>
+      <div class="flex items-center gap-2.5">
+        <span id="header-sub"></span>
+        <div id="header-profile"></div>
+      </div>
     </div>
   </header>
 
-  <main id="app" class="max-w-lg mx-auto p-4 pb-16"></main>
+  <main id="app" class="max-w-lg mx-auto px-4 pt-4 pb-14"></main>
 
-  <footer class="text-center text-xs text-gray-400 pb-6">TeeBoard &middot; live scramble scoring</footer>
+  <footer class="max-w-lg mx-auto px-4 pb-8">
+    <div class="hairline pt-4 text-center">
+      <span class="eyebrow">TeeBoard</span>
+    </div>
+  </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260726g"></script>
+  <script src="app.js?v=20260728c"></script>
 </body>
 </html>

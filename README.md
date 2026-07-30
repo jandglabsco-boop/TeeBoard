@@ -62,10 +62,35 @@ Once it's hosted, players can open it in their phone browser and use **Add to Ho
 
 | File | Purpose |
 |---|---|
-| `index.html` | Page shell, loads Tailwind (styling), Supabase JS, QR code library |
+| `index.html` | Page shell + the whole design system (CSS variables and components), loads Tailwind, Supabase JS, QR code library |
 | `app.js` | All app logic: routing, create/join flow, scorecard, live leaderboard |
 | `config.js` | Your Supabase URL + key (only file you edit to connect it) |
 | `schema.sql` | Database tables + realtime + access policies — run once in Supabase |
+
+## Design notes
+
+The look is "tour broadcast": near-black panels with condensed caps for anything
+scoreboard-ish, plain high-contrast light surfaces for anything you have to read
+or tap outdoors in the sun.
+
+Worth knowing before you change colours:
+
+- **Under par is red, not green.** `--under` is used for negative scores and for
+  birdie circles, because that's how golf leaderboards have shown it for decades.
+  Green (`--grass-*`) is the brand and interaction colour, never a score colour.
+- **Red vs green status pills.** A red `LIVE` pill means scoring is happening
+  right now (a broadcast live bug). A green `OPEN` pill means a tournament is
+  accepting entries. They mean different things — don't merge them.
+- **Two typefaces.** `Barlow Condensed` for numbers, scores, and small caps
+  labels; `Archivo` for everything you read as prose. Numbers use tabular
+  figures so columns of scores stay aligned.
+- **Scorecards use real card notation.** Circle a birdie, double-circle an
+  eagle, square a bogey, double-square anything worse — see `holeMarkClass()`
+  and `scorecardGridHtml()` in `app.js`. Cards split into nines with OUT/IN
+  totals so 18 holes fit a phone without sideways scrolling.
+
+All tokens live in the `:root` block at the top of `index.html`; changing a
+variable there restyles the whole app.
 
 ## Notes on the MVP scope
 
