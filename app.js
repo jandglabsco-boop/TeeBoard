@@ -108,8 +108,12 @@ function holeMarkClass(strokes, par) {
 // into nines so 18 holes still fit a phone without sideways scrolling.
 // `startHole` shifts the printed hole numbers to the real course holes (a
 // back-nine round prints 10–18); the internal 1..n numbering used for lookups
-// is unchanged.
-function scorecardGridHtml(par, scoreMap, startHole = 1) {
+// is unchanged. `yardage` and `handicap` are optional per-hole arrays — each
+// gets its own row only when present, so a tournament with no course data
+// still renders a clean HOLE/PAR/SCORE card.
+function scorecardGridHtml(par, scoreMap, startHole = 1, yardage = null, handicap = null) {
+  const hasYds = Array.isArray(yardage) && yardage.length === par.length;
+  const hasHcp = Array.isArray(handicap) && handicap.length === par.length;
   const nines = [];
   for (let i = 0; i < par.length; i += 9) nines.push({ start: i, pars: par.slice(i, i + 9) });
 
@@ -134,11 +138,23 @@ function scorecardGridHtml(par, scoreMap, startHole = 1) {
           </tr>
         </thead>
         <tbody>
+          ${hasYds ? `
+            <tr class="yds-row">
+              <td class="lbl">Yds</td>
+              ${holeNums.map((h) => `<td>${yardage[h - 1] ?? "–"}</td>`).join("")}
+              <td class="tot">${holeNums.reduce((a, h) => a + (yardage[h - 1] || 0), 0)}</td>
+            </tr>` : ""}
           <tr class="par-row">
             <td class="lbl">Par</td>
             ${nine.pars.map((p) => `<td>${p}</td>`).join("")}
             <td class="tot">${parSum}</td>
           </tr>
+          ${hasHcp ? `
+            <tr class="hcp-row">
+              <td class="lbl">Hcp</td>
+              ${holeNums.map((h) => `<td>${handicap[h - 1] ?? "–"}</td>`).join("")}
+              <td class="tot"></td>
+            </tr>` : ""}
           <tr>
             <td class="lbl">Score</td>
             ${holeNums.map((h, j) => `
@@ -400,6 +416,13 @@ async function viewHome() {
 
 const COURSE_SEARCH_URL = "https://api.opengolfapi.org/v1/courses/search?q=";
 const COURSE_DETAIL_URL = "https://api.opengolfapi.org/v1/courses/";
+// The /api/v1/ path returns the full card — per-hole yardages by tee and
+// handicap_index (stroke index) — where /v1/ only gives hole + par. We try the
+// detailed one first and fall back, so a course missing from it still works.
+const COURSE_FULL_URL = "https://api.opengolfapi.org/api/v1/courses/";
+// Which tee's yardages to store. White is the common members' tee; the card
+// records tee_name so it's clear which set the numbers came from.
+const DEFAULT_TEE = "white";
 
 async function viewCreate() {
   app.innerHTML = loadingHtml();
@@ -560,6 +583,18 @@ function renderCreateForm(user) {
     nineWrap.classList.toggle("hidden", holesSelect.value !== "9");
   }
 
+  // Takes the same slice of a per-hole array that getCurrentPar() takes of
+  // par, so yardage/handicap always line up with the holes being played.
+  function sliceForSelection(arr) {
+    if (!arr || !courseScorecard) return null;
+    const numHoles = parseInt(holesSelect.value, 10);
+    if (courseScorecard.totalHoles === numHoles) return arr.slice();
+    if (numHoles === 9 && courseScorecard.totalHoles === 18) {
+      return nineSelect.value === "back" ? arr.slice(9, 18) : arr.slice(0, 9);
+    }
+    return null;
+  }
+
   function getCurrentPar() {
     const numHoles = parseInt(holesSelect.value, 10);
     if (courseScorecard) {
@@ -590,7 +625,12 @@ function renderCreateForm(user) {
       ? ` Heads up: OpenGolfAPI's summary lists par ${summaryPar} for this course overall, which doesn't match the full card's total of ${fullTotalPar} — double check the numbers before sharing the join code.`
       : "";
     const siteLink = website ? ` <a href="${escapeHtml(website)}" target="_blank" class="link-underline">${escapeHtml(name)}'s site</a> ·` : "";
-    selectedNote.innerHTML = `Using ${escapeHtml(name)}'s ${escapeHtml(label)}, par ${totalPar}.${siteLink}${escapeHtml(mismatchWarning)}`;
+    const yds = sliceForSelection(courseScorecard.yardage);
+    const extras = [];
+    if (yds) extras.push(`${yds.reduce((a, b) => a + b, 0)} yds off the ${escapeHtml(courseScorecard.teeName || "white")} tees`);
+    if (sliceForSelection(courseScorecard.handicap)) extras.push("stroke indexes for tiebreaks");
+    const extraText = extras.length ? ` Also pulled ${extras.join(" and ")}.` : "";
+    selectedNote.innerHTML = `Using ${escapeHtml(name)}'s ${escapeHtml(label)}, par ${totalPar}.${extraText}${siteLink}${escapeHtml(mismatchWarning)}`;
     selectedNote.classList.remove("hidden");
   }
 
@@ -684,6 +724,30 @@ function renderCreateForm(user) {
 
       courseScorecard = { name, totalHoles, par: parArr, summaryPar: course.par || null, website: course.website || null };
 
+      // Best-effort: pull yardages and stroke indexes from the detailed
+      // endpoint so cards can show YDS/HCP rows and ties resolve on the real
+      // hardest holes. Purely additive — any failure just leaves them unset.
+      try {
+        const full = await fetch(COURSE_FULL_URL + encodeURIComponent(id)).then((r) => (r.ok ? r.json() : null));
+        const holesData = full && Array.isArray(full.holes_data) ? full.holes_data : null;
+        if (holesData) {
+          const byNum = new Map();
+          for (const h of holesData) if (!byNum.has(h.number)) byNum.set(h.number, h);
+          const nums = [...byNum.keys()].sort((a, b) => a - b);
+          // Only trust it if it lines up with the par card we're already using.
+          if (nums.length === totalHoles && nums.every((n, i) => byNum.get(n).par === parArr[i])) {
+            const yds = nums.map((n) => (byNum.get(n).yardages || {})[DEFAULT_TEE] ?? null);
+            const hcp = nums.map((n) => byNum.get(n).handicap_index ?? null);
+            if (yds.every((v) => typeof v === "number")) {
+              courseScorecard.yardage = yds;
+              courseScorecard.teeName = DEFAULT_TEE.charAt(0).toUpperCase() + DEFAULT_TEE.slice(1);
+            }
+            if (hcp.every((v) => typeof v === "number")) courseScorecard.handicap = hcp;
+          }
+        }
+      } catch { /* detailed card unavailable — par-only is still fine */ }
+      courseScorecard.courseId = id;
+
       if (totalHoles === 18 && holesSelect.value === "9") {
         // The organizer already chose a 9-hole round before searching for
         // their course — keep that choice instead of silently bumping them
@@ -731,7 +795,15 @@ function renderCreateForm(user) {
       const code = genCode(5);
       const { data, error } = await sb
         .from("tournaments")
-        .insert({ name, course_name: course || null, join_code: code, num_holes: numHoles, par, start_hole: startHole, created_by: user.id })
+        .insert({
+          name, course_name: course || null, join_code: code, num_holes: numHoles, par,
+          start_hole: startHole,
+          yardage: sliceForSelection(courseScorecard && courseScorecard.yardage),
+          handicap: sliceForSelection(courseScorecard && courseScorecard.handicap),
+          tee_name: (courseScorecard && courseScorecard.teeName) || null,
+          course_id: (courseScorecard && courseScorecard.courseId) || null,
+          created_by: user.id,
+        })
         .select()
         .single();
       if (data) tournament = data;
@@ -1596,7 +1668,7 @@ async function viewTeam(teamId) {
         </div>
 
         <div class="card overflow-hidden mb-3">
-          ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}
+          ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1, tournament.yardage, tournament.handicap)}
         </div>
 
         <div class="card p-4 mb-3 flex items-center justify-between">
@@ -1647,7 +1719,7 @@ async function viewTeam(teamId) {
     // Score entry, grouped into nines so an 18-hole card has a natural
     // turn at the halfway point rather than one endless scroll.
     let holesHtml = isSigned
-      ? `<div class="card overflow-hidden">${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}</div>`
+      ? `<div class="card overflow-hidden">${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1, tournament.yardage, tournament.handicap)}</div>`
       : "";
     for (let h = 1; !isSigned && h <= tournament.num_holes; h++) {
       if (tournament.num_holes > 9 && (h === 1 || h === 10)) {
@@ -2020,7 +2092,7 @@ async function viewScorecard(teamId) {
       </div>
 
       <div class="card overflow-hidden mb-3">
-        ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}
+        ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1, tournament.yardage, tournament.handicap)}
       </div>
 
       <p class="text-xs muted-2 mb-5 flex items-center gap-1.5">

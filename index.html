@@ -464,6 +464,10 @@
   .card-grid tbody tr { border-top: 1px solid var(--line); }
   .card-grid tbody tr:first-child { border-top: none; }
   .card-grid .par-row { color: var(--ink-2); background: #FAFCFA; }
+  /* Yardage sits above par like a printed card; smaller, since it's 3 digits. */
+  .card-grid .yds-row { color: var(--ink-3); font-size: .78rem; font-weight: 500; }
+  /* Stroke index — the order a scorecard playoff walks when teams tie. */
+  .card-grid .hcp-row { color: var(--ink-3); font-size: .78rem; background: #FAFCFA; }
   .card-grid .tot { background: var(--paper); font-weight: 700; }
   .card-grid thead .tot { background: var(--ink-700); }
 
@@ -540,6 +544,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260730c"></script>
+  <script src="app.js?v=20260730e"></script>
 </body>
 </html>

@@ -13,6 +13,9 @@ create table if not exists tournaments (
   par jsonb not null default '[]',        -- e.g. [4,4,3,5,4,3,4,5,4,4,4,3,5,4,4,3,4,5]
   start_hole int not null default 1,      -- 1, or 10 for a back-nine 9-hole round
   handicap jsonb,                         -- stroke index per hole (1 = hardest), for tiebreaks
+  yardage jsonb,                          -- yards per hole, for the tee below
+  tee_name text,                          -- e.g. 'White' — which tee the yardages are from
+  course_id text,                         -- OpenGolfAPI course id, lets the admin page re-pull tees
   status text not null default 'active',  -- 'active' | 'closed'
   created_by uuid references auth.users(id), -- the organizer account that created it
   created_at timestamptz not null default now()
@@ -146,3 +149,12 @@ create policy "only owner can delete their tournament" on tournaments
 -- Safe to re-run.
 alter table tournaments add column if not exists start_hole int not null default 1;
 alter table tournaments add column if not exists handicap jsonb;
+
+-- Full scorecard detail: yards per hole for a chosen tee, so cards show
+-- YDS/PAR/HCP like a real scorecard. course_id is OpenGolfAPI's id for the
+-- course, kept so the admin page can re-pull the tee list later; tee_name
+-- records which tee the stored yardages came from. All optional — cards just
+-- omit the rows they have no data for. Safe to re-run.
+alter table tournaments add column if not exists yardage jsonb;
+alter table tournaments add column if not exists tee_name text;
+alter table tournaments add column if not exists course_id text;
