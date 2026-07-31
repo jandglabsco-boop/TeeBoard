@@ -11,6 +11,8 @@ create table if not exists tournaments (
   join_code text not null unique,
   num_holes int not null default 18,
   par jsonb not null default '[]',        -- e.g. [4,4,3,5,4,3,4,5,4,4,4,3,5,4,4,3,4,5]
+  start_hole int not null default 1,      -- 1, or 10 for a back-nine 9-hole round
+  handicap jsonb,                         -- stroke index per hole (1 = hardest), for tiebreaks
   status text not null default 'active',  -- 'active' | 'closed'
   created_by uuid references auth.users(id), -- the organizer account that created it
   created_at timestamptz not null default now()
@@ -132,3 +134,15 @@ drop policy if exists "only owner can delete their tournament" on tournaments;
 create policy "only owner can delete their tournament" on tournaments
   for delete
   using (created_by is null or auth.uid() = created_by);
+
+-- Real course hole numbers + tiebreaks.
+--   start_hole: a 9-hole round played on the back nine is holes 10-18 on the
+--     actual course, not 1-9. Internal hole numbers still run 1..num_holes;
+--     this is only the offset used when displaying them.
+--   handicap: stroke index per hole (1 = hardest), entered by the organizer in
+--     the admin panel. Used only to break ties once teams have finished every
+--     hole — a "scorecard playoff" countback on the hardest holes first.
+--     Null means fall back to plain hole order.
+-- Safe to re-run.
+alter table tournaments add column if not exists start_hole int not null default 1;
+alter table tournaments add column if not exists handicap jsonb;

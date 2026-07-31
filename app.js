@@ -24,7 +24,17 @@ function escapeHtml(str) {
 
 function toParLabel(toPar) {
   if (toPar === 0) return "E";
-  return toPar > 0 ? `+${toPar}` : `${toPar}`;
+  // Real minus sign (U+2212), not a hyphen — it matches the digit width in
+  // tabular figures so columns of scores stay aligned.
+  return toPar > 0 ? `+${toPar}` : `−${Math.abs(toPar)}`;
+}
+
+// Broadcast convention: under par is red, even/over is ink. Every golf
+// leaderboard on TV reads this way, so the colour carries meaning before
+// anyone parses the number.
+function toParClass(toPar) {
+  if (toPar < 0) return "under";
+  return toPar === 0 ? "even" : "over";
 }
 
 // Internal hole numbers always run 1..num_holes (that's what's stored on
@@ -34,6 +44,50 @@ function toParLabel(toPar) {
 // that offset.
 function holeLabel(tournament, internalHole) {
   return (tournament.start_hole || 1) + internalHole - 1;
+}
+
+// ---------- inline icon set (no emoji, no icon-font dependency) ----------
+// 24x24 grid, 1.75 stroke, drawn to sit on the dark icon tiles.
+const ICONS = {
+  flag: `<path d="M6 21V4M6 4l11 3.5L6 11" /><path d="M4 21h5" />`,
+  trophy: `<path d="M7 4h10v5a5 5 0 0 1-10 0V4Z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /><path d="M12 14v4M9 21h6" />`,
+  board: `<rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 9h18M3 13.5h18M12 18v3M9 21h6" />`,
+  card: `<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 9v11" />`,
+  arrow: `<path d="M5 12h13M13 6l6 6-6 6" />`,
+  check: `<path d="M4 12.5 9 17.5 20 6.5" />`,
+  qr: `<rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" />`,
+  users: `<path d="M16 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20" /><circle cx="9" cy="7" r="3.5" /><path d="M22 20v-1.5a4 4 0 0 0-3-3.87" /><path d="M16.5 3.6a3.5 3.5 0 0 1 0 6.8" />`,
+  plus: `<path d="M12 5v14M5 12h14" />`,
+  lock: `<rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />`,
+};
+
+function icon(name, size = 20, extra = "") {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+    class="${extra}" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+}
+
+// Shared loading state — a shaped skeleton rather than the word "Loading…",
+// so the page doesn't visibly jump when real content lands.
+function loadingHtml() {
+  return `
+    <div class="mt-2" aria-busy="true" aria-label="Loading">
+      <div class="skeleton-line w-1/3 mb-3" style="height:.8rem"></div>
+      <div class="skeleton-line mb-2" style="height:5rem"></div>
+      <div class="skeleton-line mb-2" style="height:3.5rem"></div>
+      <div class="skeleton-line" style="height:3.5rem"></div>
+    </div>`;
+}
+
+// Consistent "we couldn't find that" panel.
+function notFoundHtml(what) {
+  return `
+    <div class="card p-6 mt-4 text-center">
+      <div class="eyebrow mb-2">404</div>
+      <p class="font-bold mb-1">${escapeHtml(what)} not found</p>
+      <p class="text-sm muted mb-4">That link or code may have expired, or the tournament was deleted.</p>
+      <a href="#/" class="btn-secondary">Back to start</a>
+    </div>`;
 }
 
 // Classic scorecard marks: circle a birdie (double-circle an eagle+), square
@@ -49,10 +103,61 @@ function holeMarkClass(strokes, par) {
   return "";
 }
 
+// Renders a real scorecard grid — holes across the top, par and score
+// beneath, OUT/IN/TOTAL columns — instead of a vertical list of rows. Splits
+// into nines so 18 holes still fit a phone without sideways scrolling.
+// `startHole` shifts the printed hole numbers to the real course holes (a
+// back-nine round prints 10–18); the internal 1..n numbering used for lookups
+// is unchanged.
+function scorecardGridHtml(par, scoreMap, startHole = 1) {
+  const nines = [];
+  for (let i = 0; i < par.length; i += 9) nines.push({ start: i, pars: par.slice(i, i + 9) });
+
+  const totalLabel = (idx) => (par.length <= 9 ? "TOT" : idx === 0 ? "OUT" : idx === 1 ? "IN" : "TOT");
+
+  const blocks = nines.map((nine, idx) => {
+    // internal hole numbers, used to read par/scores
+    const holeNums = nine.pars.map((_, j) => nine.start + j + 1);
+    // what gets printed in the header row
+    const printed = holeNums.map((h) => startHole + h - 1);
+    const parSum = nine.pars.reduce((a, b) => a + b, 0);
+    const played = holeNums.filter((h) => scoreMap[h] != null);
+    const scoreSum = played.reduce((a, h) => a + scoreMap[h], 0);
+
+    return `
+      <table class="card-grid">
+        <thead>
+          <tr>
+            <th class="lbl" style="width:2.7rem">Hole</th>
+            ${printed.map((h) => `<th>${h}</th>`).join("")}
+            <th class="tot" style="width:2.4rem">${totalLabel(idx)}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="par-row">
+            <td class="lbl">Par</td>
+            ${nine.pars.map((p) => `<td>${p}</td>`).join("")}
+            <td class="tot">${parSum}</td>
+          </tr>
+          <tr>
+            <td class="lbl">Score</td>
+            ${holeNums.map((h, j) => `
+              <td style="padding:.3rem 0">
+                <span class="hole-mark hole-mark-sm ${holeMarkClass(scoreMap[h], nine.pars[j])}">${scoreMap[h] ?? "·"}</span>
+              </td>`).join("")}
+            <td class="tot">${played.length ? scoreSum : "–"}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  });
+
+  return blocks.join(`<div style="height:1px;background:var(--line-2)"></div>`);
+}
+
 function toast(msg, isError) {
   let t = document.createElement("div");
   t.textContent = msg;
-  t.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg text-white text-sm z-50 ${isError ? "bg-red-600" : "bg-gray-900"}`;
+  t.className = `toast${isError ? " error" : ""}`;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2500);
 }
@@ -121,9 +226,12 @@ async function renderHeaderProfile() {
   const initial = escapeHtml(user.email.charAt(0).toUpperCase());
   el.innerHTML = `
     <div class="relative">
-      <button id="profile-btn" class="w-8 h-8 rounded-full bg-green-600 text-white font-bold text-sm flex items-center justify-center">${initial}</button>
-      <div id="profile-menu" class="hidden absolute right-0 mt-2 w-56 card text-gray-900 p-3 z-30">
-        <div class="text-xs text-gray-500 mb-2 break-all">Signed in as<br><b>${escapeHtml(user.email)}</b></div>
+      <button id="profile-btn" aria-label="Account menu"
+        class="w-8 h-8 rounded-lg text-white font-bold text-sm flex items-center justify-center"
+        style="background:var(--grass-600);border:1px solid rgba(255,255,255,.15);">${initial}</button>
+      <div id="profile-menu" class="hidden absolute right-0 mt-2 w-60 card p-3 z-40">
+        <div class="eyebrow mb-1">Signed in as</div>
+        <div class="text-sm font-semibold mb-3 break-all">${escapeHtml(user.email)}</div>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -152,7 +260,10 @@ async function renderHeaderProfile() {
 const routes = [
   { re: /^#\/$/, view: viewHome },
   { re: /^#\/create$/, view: viewCreate },
-  { re: /^#\/join$/, view: viewJoin },
+  // Wrapped so the regex match array isn't passed in as prefillCode — bare
+  // `view: viewJoin` handed it the match ("#/join"), which pre-filled the code
+  // box with that string and auto-fired a doomed lookup on arrival.
+  { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
@@ -162,7 +273,7 @@ const routes = [
 
 function route() {
   clearRealtime();
-  headerSub.textContent = "";
+  headerSub.innerHTML = "";
   renderHeaderProfile();
   const hash = location.hash || "#/";
   for (const r of routes) {
@@ -176,10 +287,14 @@ window.addEventListener("hashchange", route);
 window.addEventListener("DOMContentLoaded", () => {
   if (!CONFIGURED) {
     app.innerHTML = `
-      <div class="card p-5 mt-6">
-        <h2 class="font-bold text-lg mb-2">⚠️ Not connected yet</h2>
-        <p class="text-sm text-gray-600 mb-2">This app needs a free Supabase project to store tournaments and scores.</p>
-        <p class="text-sm text-gray-600">Open <code class="bg-gray-100 px-1 rounded">config.js</code> and fill in your <code class="bg-gray-100 px-1 rounded">SUPABASE_URL</code> and <code class="bg-gray-100 px-1 rounded">SUPABASE_ANON_KEY</code>, then reload. See README.md for step-by-step setup.</p>
+      <div class="card p-6 mt-4">
+        <div class="eyebrow mb-2">Setup required</div>
+        <h2 class="text-lg mb-2">Not connected yet</h2>
+        <p class="text-sm muted mb-3">TeeBoard needs a free Supabase project to store tournaments and scores.</p>
+        <p class="text-sm muted">Open <code class="px-1 rounded" style="background:var(--paper)">config.js</code>, fill in your
+        <code class="px-1 rounded" style="background:var(--paper)">SUPABASE_URL</code> and
+        <code class="px-1 rounded" style="background:var(--paper)">SUPABASE_ANON_KEY</code>, then reload.
+        See README.md for step-by-step setup.</p>
       </div>`;
     return;
   }
@@ -189,7 +304,7 @@ window.addEventListener("DOMContentLoaded", () => {
 // ---------- HOME ----------
 
 async function viewHome() {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
 
   const user = await getUser();
   const teams = myTeams();
@@ -210,74 +325,72 @@ async function viewHome() {
     legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
   }
 
-  app.innerHTML = `
-    <div class="text-center my-7">
-      <svg width="72" height="72" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="mx-auto mb-2">
-        <path d="M20 92 Q50 82 80 92" stroke="#2fa84f" stroke-width="5" stroke-linecap="round" fill="none" />
-        <path d="M42 66 L58 66 L52 88 L48 88 Z" fill="#16231d" />
-        <circle cx="50" cy="17" r="7" fill="none" stroke="#16231d" stroke-width="4" />
-        <rect x="14" y="20" width="72" height="46" rx="9" fill="#ffffff" stroke="#16231d" stroke-width="4" />
-        <line x1="14" y1="35" x2="86" y2="35" stroke="#16231d" stroke-width="2.5" />
-        <line x1="14" y1="50" x2="86" y2="50" stroke="#16231d" stroke-width="2.5" />
-        <circle cx="60" cy="58" r="6.5" fill="none" stroke="#2fa84f" stroke-width="3" />
-      </svg>
-      <h1 class="wordmark text-3xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></h1>
-      <p class="text-gray-500 mt-1.5">Live scoring for scrambles &amp; small tournaments</p>
-    </div>
+  const listRow = (href, title, meta, action) => `
+    <a href="${href}" class="row-link">
+      <div class="min-w-0 flex-1">
+        <div class="font-semibold truncate">${title}</div>
+        <div class="eyebrow mt-0.5">${meta}</div>
+      </div>
+      <span class="btn-ghost shrink-0">${action} ${icon("arrow", 14)}</span>
+    </a>`;
 
-    <div class="grid grid-cols-1 gap-3">
-      <a href="#/join" class="card p-5 flex items-center gap-4 hover:-translate-y-0.5 transition">
-        <span class="icon-badge">🏌️</span>
-        <div>
-          <div class="font-bold">Join a Tournament</div>
-          <div class="text-sm text-gray-500">Have a code? Enter scores for your team.</div>
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-6 pb-6 mb-2.5">
+      <div class="eyebrow on-dark mb-3">Live scramble scoring</div>
+      <h1 class="wordmark on-dark" style="font-size:3.2rem">
+        <span class="wm-tee">TEE</span><span class="wm-board">BOARD</span>
+      </h1>
+      <p class="mt-3 text-[15px]" style="color:rgba(255,255,255,.6);max-width:21rem">
+        One shared card per team. Every phone updates the second a score goes in.
+      </p>
+    </section>
+
+    <div class="grid grid-cols-1 gap-2.5 mb-2">
+      <a href="#/join" class="row-link">
+        <span class="icon-tile">${icon("flag", 22)}</span>
+        <div class="min-w-0 flex-1">
+          <div class="font-bold">Join a tournament</div>
+          <div class="text-sm muted">Got a code? Score for your team.</div>
         </div>
+        <span class="muted-2 shrink-0">${icon("arrow", 18)}</span>
       </a>
-      <a href="#/create" class="card p-5 flex items-center gap-4 hover:-translate-y-0.5 transition">
-        <span class="icon-badge">🏆</span>
-        <div>
-          <div class="font-bold">Create a Tournament</div>
-          <div class="text-sm text-gray-500">Set up tonight's scramble and get a join code.</div>
+      <a href="#/create" class="row-link">
+        <span class="icon-tile">${icon("trophy", 22)}</span>
+        <div class="min-w-0 flex-1">
+          <div class="font-bold">Create a tournament</div>
+          <div class="text-sm muted">Set up tonight's scramble, get a code.</div>
         </div>
+        <span class="muted-2 shrink-0">${icon("arrow", 18)}</span>
       </a>
     </div>
 
     ${teamEntries.length ? `
-      <h2 class="font-bold text-gray-500 text-xs tracking-wide uppercase mt-8 mb-2">My Teams</h2>
+      <div class="flex items-center gap-3 mt-7 mb-2.5">
+        <h2 class="eyebrow">My teams</h2>
+        <div class="flex-1 hairline"></div>
+      </div>
       <div class="grid grid-cols-1 gap-2">
-        ${teamEntries.map(([tid, t]) => `
-          <a href="#/team/${t.teamId}" class="card p-4 flex items-center justify-between">
-            <div>
-              <div class="font-semibold">${escapeHtml(t.teamName)}</div>
-              <div class="text-xs text-gray-500">team code ${escapeHtml(t.teamCode)}</div>
-            </div>
-            <span class="btn-ghost">Score &rarr;</span>
-          </a>
-        `).join("")}
+        ${teamEntries.map(([tid, t]) => listRow(
+          `#/team/${t.teamId}`,
+          escapeHtml(t.teamName),
+          `Team code ${escapeHtml(t.teamCode)}`,
+          "Score",
+        )).join("")}
       </div>
     ` : ""}
 
     ${(owned.length || legacy.length) ? `
-      <h2 class="font-bold text-gray-500 text-xs tracking-wide uppercase mt-8 mb-2">Tournaments I Created</h2>
+      <div class="flex items-center gap-3 mt-7 mb-2.5">
+        <h2 class="eyebrow">Tournaments I created</h2>
+        <div class="flex-1 hairline"></div>
+      </div>
       <div class="grid grid-cols-1 gap-2">
-        ${owned.map((t) => `
-          <a href="#/admin/${t.id}" class="card p-4 flex items-center justify-between">
-            <div>
-              <div class="font-semibold">${escapeHtml(t.name)}</div>
-              <div class="text-xs text-gray-500">code ${escapeHtml(t.join_code)}</div>
-            </div>
-            <span class="btn-ghost">Manage &rarr;</span>
-          </a>
-        `).join("")}
-        ${legacy.map((t) => `
-          <a href="#/admin/${t.id}" class="card p-4 flex items-center justify-between">
-            <div>
-              <div class="font-semibold">${escapeHtml(t.name)}</div>
-              <div class="text-xs text-gray-500">code ${escapeHtml(t.code)}</div>
-            </div>
-            <span class="btn-ghost">Manage &rarr;</span>
-          </a>
-        `).join("")}
+        ${owned.map((t) => listRow(
+          `#/admin/${t.id}`, escapeHtml(t.name), `Code ${escapeHtml(t.join_code)}`, "Manage",
+        )).join("")}
+        ${legacy.map((t) => listRow(
+          `#/admin/${t.id}`, escapeHtml(t.name), `Code ${escapeHtml(t.code)}`, "Manage",
+        )).join("")}
       </div>
     ` : ""}
   `;
@@ -289,7 +402,7 @@ const COURSE_SEARCH_URL = "https://api.opengolfapi.org/v1/courses/search?q=";
 const COURSE_DETAIL_URL = "https://api.opengolfapi.org/v1/courses/";
 
 async function viewCreate() {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
   const user = await getUser();
   if (!user) return renderAuthGate();
   renderCreateForm(user);
@@ -303,18 +416,31 @@ function renderAuthGate() {
 
   function draw() {
     app.innerHTML = `
-      <h1 class="text-xl font-bold mb-4">Create a Tournament</h1>
+      <div class="mb-4">
+        <div class="eyebrow mb-1">Organizer</div>
+        <h1 class="text-2xl">Create a tournament</h1>
+      </div>
+
+      <div class="card p-3 mb-3 flex items-start gap-3" style="background:var(--grass-100);border-color:var(--grass-200)">
+        <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("lock", 18)}</span>
+        <p class="text-sm" style="color:var(--grass-700)">
+          Organizers need a free account so only you can manage what you create.
+          <b>Players never sign up</b> — they just use the join code.
+        </p>
+      </div>
+
       <div class="card p-5">
-        <p class="text-sm text-gray-600 mb-4">Creating a tournament needs a free organizer account, so only you can manage it later. Players never need an account — they just use a join code.</p>
-        <div class="flex gap-2 mb-4">
-          <button id="tab-signup" class="${mode === "signup" ? "btn-primary" : "btn-secondary"} flex-1">Sign Up</button>
-          <button id="tab-signin" class="${mode === "signin" ? "btn-primary" : "btn-secondary"} flex-1">Sign In</button>
+        <div class="flex gap-2 mb-5 p-1 rounded-xl" style="background:var(--paper)">
+          <button id="tab-signup" class="flex-1 py-2 rounded-lg text-sm font-bold transition"
+            style="${mode === "signup" ? "background:var(--surface);box-shadow:0 1px 3px rgba(8,17,12,.12)" : "color:var(--ink-2)"}">Sign up</button>
+          <button id="tab-signin" class="flex-1 py-2 rounded-lg text-sm font-bold transition"
+            style="${mode === "signin" ? "background:var(--surface);box-shadow:0 1px 3px rgba(8,17,12,.12)" : "color:var(--ink-2)"}">Sign in</button>
         </div>
-        <label class="text-sm font-semibold">Email</label>
-        <input id="auth-email" type="email" placeholder="you@email.com" class="mb-3" />
-        <label class="text-sm font-semibold">Password</label>
-        <input id="auth-password" type="password" placeholder="At least 6 characters" class="mb-3" />
-        <button id="auth-submit" class="btn-primary w-full">${mode === "signup" ? "Create Account" : "Sign In"}</button>
+        <label class="field-label">Email</label>
+        <input id="auth-email" type="email" placeholder="you@email.com" class="mb-4" />
+        <label class="field-label">Password</label>
+        <input id="auth-password" type="password" placeholder="At least 6 characters" class="mb-4" />
+        <button id="auth-submit" class="btn-primary w-full">${mode === "signup" ? "Create account" : "Sign in"}</button>
         <div id="auth-status" class="text-xs mt-3"></div>
       </div>
     `;
@@ -329,20 +455,20 @@ function renderAuthGate() {
       const btn = document.getElementById("auth-submit");
 
       if (!email || !password) {
-        statusEl.className = "text-xs mt-3 text-red-600";
+        statusEl.className = "text-xs mt-3 status-err";
         statusEl.textContent = "Enter an email and password.";
         return;
       }
 
       btn.disabled = true;
-      statusEl.className = "text-xs mt-3 text-gray-500";
+      statusEl.className = "text-xs mt-3 status-info";
       statusEl.textContent = mode === "signup" ? "Creating account…" : "Signing in…";
 
       if (mode === "signup") {
         const { data, error } = await sb.auth.signUp({ email, password });
         btn.disabled = false;
         if (error) {
-          statusEl.className = "text-xs mt-3 text-red-600";
+          statusEl.className = "text-xs mt-3 status-err";
           statusEl.textContent = error.message;
           return;
         }
@@ -351,13 +477,13 @@ function renderAuthGate() {
         mode = "signin";
         draw();
         const s = document.getElementById("auth-status");
-        s.className = "text-xs mt-3 text-green-700 font-semibold";
+        s.className = "text-xs mt-3 status-ok";
         s.textContent = "Account created — check your email to confirm it, then sign in here.";
       } else {
         const { error } = await sb.auth.signInWithPassword({ email, password });
         btn.disabled = false;
         if (error) {
-          statusEl.className = "text-xs mt-3 text-red-600";
+          statusEl.className = "text-xs mt-3 status-err";
           statusEl.textContent = error.message;
           return;
         }
@@ -372,37 +498,37 @@ function renderAuthGate() {
 
 function renderCreateForm(user) {
   app.innerHTML = `
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold">Create a Tournament</h1>
-      <span class="text-xs text-gray-400">${escapeHtml(user.email)}</span>
+    <div class="mb-4">
+      <div class="eyebrow mb-1">Organizer · ${escapeHtml(user.email)}</div>
+      <h1 class="text-2xl">Create a tournament</h1>
     </div>
-    <form id="create-form" class="card p-5 flex flex-col gap-4">
+    <form id="create-form" class="card p-5 flex flex-col gap-5">
       <div>
-        <label class="text-sm font-semibold">Tournament name</label>
+        <label class="field-label">Tournament name</label>
         <input name="name" required placeholder="Thursday Night Scramble" />
       </div>
       <div class="relative">
-        <label class="text-sm font-semibold">Course</label>
-        <input id="course-input" name="course" placeholder="Search for your course… e.g. Pine Valley" autocomplete="off" />
+        <label class="field-label">Course</label>
+        <input id="course-input" name="course" placeholder="Search your course… e.g. Pine Valley" autocomplete="off" />
         <div id="course-results" class="hidden absolute z-20 left-0 right-0 mt-1 card max-h-64 overflow-y-auto"></div>
-        <p id="course-attribution" class="text-xs text-gray-400 mt-1">Search pulls real course data (holes &amp; par) from <a href="https://opengolfapi.org" target="_blank" class="underline">OpenGolfAPI</a>, free &amp; open (ODbL). Can't find your course? That's okay — every hole will default to par 4.</p>
-        <p id="course-selected-note" class="hidden text-xs text-green-700 font-semibold mt-1"></p>
+        <p id="course-attribution" class="text-xs muted-2 mt-1.5 leading-relaxed">Pulls real hole-by-hole par from <a href="https://opengolfapi.org" target="_blank" class="link-underline">OpenGolfAPI</a> (free &amp; open, ODbL). Not listed? No problem — every hole defaults to par 4.</p>
+        <p id="course-selected-note" class="hidden text-xs font-semibold mt-2 p-2 rounded-lg" style="color:var(--grass-700);background:var(--grass-100)"></p>
       </div>
       <div>
-        <label class="text-sm font-semibold">Holes</label>
+        <label class="field-label">Holes</label>
         <select id="holes-select" name="holes">
           <option value="18">18 holes</option>
           <option value="9">9 holes</option>
         </select>
       </div>
       <div id="nine-wrap" class="hidden">
-        <label class="text-sm font-semibold">Which nine?</label>
+        <label class="field-label">Which nine?</label>
         <select id="nine-select" name="nine">
           <option value="front">Front nine (holes 1–9)</option>
           <option value="back">Back nine (holes 10–18)</option>
         </select>
       </div>
-      <button class="btn-primary" type="submit">Create &amp; Get Code</button>
+      <button class="btn-primary w-full" type="submit">Create &amp; get code</button>
     </form>
   `;
 
@@ -463,8 +589,8 @@ function renderCreateForm(user) {
     const mismatchWarning = (summaryPar && totalHoles === fullPar.length && summaryPar !== fullTotalPar)
       ? ` Heads up: OpenGolfAPI's summary lists par ${summaryPar} for this course overall, which doesn't match the full card's total of ${fullTotalPar} — double check the numbers before sharing the join code.`
       : "";
-    const siteLink = website ? ` <a href="${escapeHtml(website)}" target="_blank" class="underline">${escapeHtml(name)}'s site</a> ·` : "";
-    selectedNote.innerHTML = `✓ Using ${escapeHtml(name)}'s ${escapeHtml(label)}, par ${totalPar}.${siteLink}${escapeHtml(mismatchWarning)}`;
+    const siteLink = website ? ` <a href="${escapeHtml(website)}" target="_blank" class="link-underline">${escapeHtml(name)}'s site</a> ·` : "";
+    selectedNote.innerHTML = `Using ${escapeHtml(name)}'s ${escapeHtml(label)}, par ${totalPar}.${siteLink}${escapeHtml(mismatchWarning)}`;
     selectedNote.classList.remove("hidden");
   }
 
@@ -500,14 +626,14 @@ function renderCreateForm(user) {
       const data = await res.json();
       const courses = (data.courses || []).slice(0, 8);
       if (!courses.length) {
-        resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">No matches — that's okay, every hole will default to par 4.</div>`;
+        resultsBox.innerHTML = `<div class="p-3 text-sm muted-2">No matches — that's okay, every hole will default to par 4.</div>`;
         resultsBox.classList.remove("hidden");
         return;
       }
       resultsBox.innerHTML = courses.map((c) => `
-        <div class="search-result p-3 border-b border-gray-100 cursor-pointer" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">
+        <div class="search-result p-3 cursor-pointer" style="border-bottom:1px solid var(--line)" data-id="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">
           <div class="font-semibold text-sm">${escapeHtml(c.name)}</div>
-          <div class="text-xs text-gray-400">${escapeHtml([c.city, c.state].filter(Boolean).join(", ")) || "&nbsp;"}</div>
+          <div class="eyebrow mt-0.5">${escapeHtml([c.city, c.state].filter(Boolean).join(", ")) || "&nbsp;"}</div>
         </div>
       `).join("");
       resultsBox.classList.remove("hidden");
@@ -519,7 +645,7 @@ function renderCreateForm(user) {
       });
     } catch {
       if (myToken !== searchToken) return;
-      resultsBox.innerHTML = `<div class="p-3 text-sm text-gray-400">Couldn't reach course search right now — that's okay, every hole will default to par 4.</div>`;
+      resultsBox.innerHTML = `<div class="p-3 text-sm muted-2">Couldn't reach course search right now — that's okay, every hole will default to par 4.</div>`;
       resultsBox.classList.remove("hidden");
     }
   }
@@ -598,7 +724,7 @@ function renderCreateForm(user) {
 
     const btn = e.target.querySelector("button");
     btn.disabled = true;
-    btn.textContent = "Creating...";
+    btn.textContent = "Creating…";
 
     let tournament = null;
     for (let attempt = 0; attempt < 6 && !tournament; attempt++) {
@@ -612,14 +738,14 @@ function renderCreateForm(user) {
       else if (error && error.code !== "23505") {
         toast("Couldn't create tournament: " + error.message, true);
         btn.disabled = false;
-        btn.textContent = "Create & Get Code";
+        btn.textContent = "Create & get code";
         return;
       }
     }
     if (!tournament) {
       toast("Couldn't generate a unique code, try again.", true);
       btn.disabled = false;
-      btn.textContent = "Create & Get Code";
+      btn.textContent = "Create & get code";
       return;
     }
     saveMyTournament({ id: tournament.id, name: tournament.name, code: tournament.join_code });
@@ -630,14 +756,14 @@ function renderCreateForm(user) {
 // ---------- ADMIN VIEW ----------
 
 async function viewAdmin(tournamentId) {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
 
   const [{ data: tournament, error }, user] = await Promise.all([
     sb.from("tournaments").select("*").eq("id", tournamentId).single(),
     getUser(),
   ]);
   if (error || !tournament) {
-    app.innerHTML = `<div class="card p-5 mt-6">Tournament not found.</div>`;
+    app.innerHTML = notFoundHtml("Tournament");
     return;
   }
   // Tournaments created before accounts existed have no owner — anyone with the
@@ -659,68 +785,115 @@ async function viewAdmin(tournamentId) {
       .order("created_at", { ascending: true });
 
     const joinUrl = shareLink(`/join/${tournament.join_code}`);
-    const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
+
+    const par = tournament.par && tournament.par.length === tournament.num_holes
+      ? tournament.par
+      : Array(tournament.num_holes).fill(4);
     const handicapArr = tournament.handicap && tournament.handicap.length === tournament.num_holes
       ? tournament.handicap
       : Array.from({ length: tournament.num_holes }, (_, i) => i + 1);
 
-    app.innerHTML = `
-      <div class="flex items-center justify-between mb-2">
-        <h1 class="text-xl font-bold">${escapeHtml(tournament.name)}</h1>
-        <span class="text-xs px-2 py-1 rounded-full ${tournament.status === "active" ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-600"}">${tournament.status}</span>
-      </div>
-      ${tournament.course_name ? `<p class="text-gray-500 text-sm mb-4">${escapeHtml(tournament.course_name)} &middot; ${tournament.num_holes} holes</p>` : ""}
+    const isActive = tournament.status === "active";
+    const totalPlayers = (teams || []).reduce((n, t) => n + (t.team_members || []).length, 0);
+    const signedCount = (teams || []).filter((t) => t.signed_at).length;
 
-      <div id="qr-print-area" class="card p-5 text-center mb-4">
-        <div class="text-sm text-gray-500 mb-1">Join code</div>
-        <div class="text-4xl font-black tracking-widest text-green-700">${tournament.join_code}</div>
-        <canvas id="qr" class="mx-auto mt-3"></canvas>
-        <div class="text-xs text-gray-400 mt-2">Scan to join &amp; score &mdash; ${escapeHtml(tournament.name)}</div>
-        <div class="flex gap-2 mt-3 no-print">
-          <button id="copy-link" class="btn-secondary flex-1">Copy join link</button>
-          <button id="print-qr" class="btn-secondary flex-1">Print QR</button>
-          <a href="#/leaderboard/${tournament.id}" class="btn-primary flex-1 text-center">Leaderboard</a>
+    app.innerHTML = `
+      <section class="panel-dark px-5 pt-5 pb-4 mb-3">
+        <div class="flex items-start justify-between gap-3 mb-3">
+          <div class="eyebrow on-dark">Organizer dashboard</div>
+          <span class="pill ${isActive ? "open" : "on-dark"}">${isActive ? '<span class="dot"></span>Open' : "Closed"}</span>
+        </div>
+        <h1 class="display" style="font-size:2rem;color:#fff">${escapeHtml(tournament.name)}</h1>
+        <div class="grid grid-cols-3 gap-3 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
+          <div>
+            <div class="num-display" style="font-size:1.7rem;color:#fff">${(teams || []).length}</div>
+            <div class="eyebrow on-dark mt-1">Teams</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:1.7rem;color:#fff">${totalPlayers}</div>
+            <div class="eyebrow on-dark mt-1">Players</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:1.7rem;color:#fff">${signedCount}</div>
+            <div class="eyebrow on-dark mt-1">Signed</div>
+          </div>
+        </div>
+        ${tournament.course_name ? `<p class="text-xs mt-3" style="color:rgba(255,255,255,.45)">${escapeHtml(tournament.course_name)} · ${tournament.num_holes} holes</p>` : ""}
+      </section>
+
+      <div id="qr-print-area" class="card overflow-hidden mb-3">
+        <div class="px-5 pt-5 pb-4 text-center">
+          <div class="eyebrow mb-2">Join code</div>
+          <div class="display" style="font-size:3.2rem;letter-spacing:.14em;text-indent:.14em">${escapeHtml(tournament.join_code)}</div>
+          <div class="mt-4 inline-block"><canvas id="qr" class="block rounded-lg"></canvas></div>
+          <div class="eyebrow mt-3">Scan to join &amp; score</div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 p-3 no-print" style="border-top:1px solid var(--line);background:#FBFCFB">
+          <button id="copy-link" class="btn-secondary text-sm" style="padding:.7rem .4rem;white-space:nowrap">Copy link</button>
+          <button id="print-qr" class="btn-secondary text-sm" style="padding:.7rem .4rem;white-space:nowrap">${icon("qr", 15)} Print</button>
+          <a href="#/leaderboard/${tournament.id}" class="btn-primary text-sm" style="padding:.7rem .4rem;white-space:nowrap">Board</a>
         </div>
       </div>
 
-      <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Teams (${(teams || []).length})</h2>
+      <div class="flex items-center gap-3 mt-6 mb-2.5">
+        <h2 class="eyebrow">Teams (${(teams || []).length})</h2>
+        <span class="flex-1 hairline"></span>
+      </div>
+
       <div class="grid grid-cols-1 gap-2 mb-4">
-        ${(teams || []).length === 0 ? `<div class="card p-4 text-sm text-gray-500">No teams yet — share the join code above.</div>` : ""}
+        ${(teams || []).length === 0 ? `
+          <div class="card p-8 text-center">
+            <div class="mx-auto mb-3 flex items-center justify-center" style="color:var(--ink-3)">${icon("users", 30)}</div>
+            <p class="font-semibold mb-1">No teams yet</p>
+            <p class="text-sm muted">Share the code above, or add players below.</p>
+          </div>` : ""}
         ${(teams || []).map((t) => {
           const expanded = expandedTeams.has(t.id);
+          const entered = (t.scores || []).length;
+          const pct = Math.round((entered / tournament.num_holes) * 100);
           return `
           <div class="card p-4">
-            <div class="flex items-center justify-between">
-              <div class="font-semibold">${escapeHtml(t.name)}${t.signed_at ? ` <span class="fin-badge" title="Signed by ${escapeHtml(t.signed_by || "")}">F</span>` : ""}</div>
-              <span class="text-xs text-gray-400">code ${escapeHtml(t.join_code)}</span>
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="font-bold truncate">${escapeHtml(t.name)}${t.signed_at ? ` <span class="fin-badge" title="Signed by ${escapeHtml(t.signed_by || "")}">F</span>` : ""}</div>
+                <div class="text-xs muted mt-0.5 truncate">${(t.team_members || []).map((m) => escapeHtml(m.player_name)).join(" · ") || "No players yet"}</div>
+              </div>
+              <span class="pill shrink-0">${escapeHtml(t.join_code)}</span>
             </div>
-            <div class="text-xs text-gray-500 mt-1">${(t.team_members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "no players yet"}</div>
-            <div class="text-xs text-gray-400 mt-1">${(t.scores || []).length}/${tournament.num_holes} holes entered${t.signed_at ? ` &middot; signed by ${escapeHtml(t.signed_by || "—")}` : ""}</div>
+
+            <div class="flex items-center gap-2.5 mt-3">
+              <div class="flex-1 rounded-full overflow-hidden" style="height:5px;background:var(--line)">
+                <div style="width:${pct}%;height:100%;background:${t.signed_at ? "var(--grass-500)" : "var(--ink-600)"};transition:width .3s ease"></div>
+              </div>
+              <span class="eyebrow shrink-0">${entered}/${tournament.num_holes}${t.signed_at ? " · signed" : ""}</span>
+            </div>
+
             ${isOwner ? `
-              <button data-manage-team="${escapeHtml(t.id)}" class="btn-ghost text-xs mt-2">${expanded ? "Hide" : "Edit team"}</button>
-              <div class="${expanded ? "" : "hidden"} mt-3 pt-3 border-t border-gray-100">
-                <label class="text-xs font-semibold text-gray-500">Team name</label>
-                <div class="flex gap-2 mb-3">
+              <button data-manage-team="${escapeHtml(t.id)}" class="btn-ghost mt-2.5">${expanded ? "Hide" : "Edit team"}</button>
+              <div class="${expanded ? "" : "hidden"} mt-3 pt-3" style="border-top:1px solid var(--line)">
+                <label class="field-label">Team name</label>
+                <div class="flex gap-2 mb-4">
                   <input data-rename-input="${escapeHtml(t.id)}" value="${escapeHtml(t.name)}" class="flex-1" />
-                  <button data-rename-btn="${escapeHtml(t.id)}" class="btn-secondary">Save</button>
+                  <button data-rename-btn="${escapeHtml(t.id)}" class="btn-secondary shrink-0">Save</button>
                 </div>
                 ${(t.team_members || []).length ? `
-                  <div class="flex flex-col gap-1 mb-3">
+                  <label class="field-label">Players</label>
+                  <div class="flex flex-col gap-1 mb-4">
                     ${(t.team_members || []).map((m) => `
-                      <div class="flex items-center justify-between text-sm bg-gray-50 rounded px-2 py-1">
-                        <span>${escapeHtml(m.player_name)}</span>
-                        <button data-remove-member="${escapeHtml(m.id)}" class="text-red-500 text-xs font-bold">Remove</button>
+                      <div class="flex items-center justify-between text-sm rounded-lg px-2.5 py-1.5" style="background:var(--paper)">
+                        <span class="truncate">${escapeHtml(m.player_name)}</span>
+                        <button data-remove-member="${escapeHtml(m.id)}" class="text-xs font-bold shrink-0 ml-2" style="color:var(--under)">Remove</button>
                       </div>
                     `).join("")}
                   </div>
                 ` : ""}
-                <label class="text-xs font-semibold text-gray-500">Add player</label>
+                <label class="field-label">Add player</label>
                 <div class="flex gap-2 mb-3">
                   <input data-quick-add-input="${escapeHtml(t.id)}" placeholder="Player name" class="flex-1" />
-                  <button data-quick-add-btn="${escapeHtml(t.id)}" class="btn-primary">Add</button>
+                  <button data-quick-add-btn="${escapeHtml(t.id)}" class="btn-primary shrink-0">Add</button>
                 </div>
                 ${t.signed_at ? `
-                  <button data-reopen-team="${escapeHtml(t.id)}" class="btn-secondary text-xs w-full">Reopen scorecard (undo signing)</button>
+                  <button data-reopen-team="${escapeHtml(t.id)}" class="btn-secondary text-sm w-full">Reopen scorecard (undo signing)</button>
                 ` : ""}
               </div>
             ` : ""}
@@ -729,63 +902,100 @@ async function viewAdmin(tournamentId) {
       </div>
 
       ${isOwner ? `
-        <div class="card p-4 mb-4">
-          <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Add a Player</h2>
-          <p class="text-xs text-gray-500 mb-2">Add one person at a time — to an existing team, or a brand new one.</p>
-          <label class="text-sm font-semibold">Team</label>
-          <select id="add-team-select" class="mb-2">
+        <div class="flex items-center gap-3 mt-6 mb-2.5">
+          <h2 class="eyebrow">Roster</h2>
+          <span class="flex-1 hairline"></span>
+        </div>
+
+        <div class="card p-5 mb-2.5">
+          <div class="flex items-center gap-2 mb-1">
+            <span style="color:var(--grass-600)">${icon("plus", 17)}</span>
+            <h3 class="font-bold">Add a player</h3>
+          </div>
+          <p class="text-xs muted mb-4">One at a time — to an existing team, or a brand new one.</p>
+          <label class="field-label">Team</label>
+          <select id="add-team-select" class="mb-3">
             <option value="__new">+ New team</option>
             ${(teams || []).map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join("")}
           </select>
-          <div id="new-team-name-wrap" class="mb-2">
+          <div id="new-team-name-wrap" class="mb-3">
             <input id="new-team-name" placeholder="New team name, e.g. The Duffers" />
           </div>
-          <label class="text-sm font-semibold">Player name</label>
-          <input id="add-player-name" placeholder="Player name" class="mb-3" />
-          <button id="add-player-btn" class="btn-primary w-full">Add Player</button>
+          <label class="field-label">Player name</label>
+          <input id="add-player-name" placeholder="Player name" class="mb-4" />
+          <button id="add-player-btn" class="btn-primary w-full">Add player</button>
           <div id="add-player-status" class="text-xs mt-2"></div>
         </div>
 
-        <div class="card p-4 mb-4">
-          <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Import Roster (CSV)</h2>
-          <p class="text-xs text-gray-500 mb-2">
-            Columns: <code class="bg-gray-100 px-1 rounded">team</code>, <code class="bg-gray-100 px-1 rounded">player</code>.
-            No team column? Everyone gets auto-grouped into teams of 4, in file order.
-            <a class="underline text-green-700" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
+        <div class="card p-5 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span style="color:var(--grass-600)">${icon("users", 17)}</span>
+            <h3 class="font-bold">Import roster (CSV)</h3>
+          </div>
+          <p class="text-xs muted mb-3 leading-relaxed">
+            Columns <code class="px-1 rounded" style="background:var(--paper)">team</code> and
+            <code class="px-1 rounded" style="background:var(--paper)">player</code>.
+            No team column? Everyone is auto-grouped into fours, in file order.
+            <a class="link-underline font-semibold" style="color:var(--grass-700)" download="teeboard-roster-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent("team,player\nThe Duffers,Ben Herbst\nThe Duffers,Gabe Smith\nThe Duffers,Sam Lee\nThe Duffers,Pat Jordan\nBirdie Brigade,Alex Kim\nBirdie Brigade,Jordan Rivera\n")}">Download template</a>
           </p>
           <input type="file" id="csv-input" accept=".csv,text/csv" />
-          <div id="csv-status" class="text-xs text-gray-500 mt-2"></div>
+          <div id="csv-status" class="text-xs muted mt-2"></div>
         </div>
 
-        <div class="card p-4 mb-4">
-          <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">Hole Handicaps (Stroke Index)</h2>
-          <p class="text-xs text-gray-500 mb-3">Only needed for scorecard-playoff tiebreaks — if two teams finish tied, TeeBoard breaks the tie using the score on the hardest hole (handicap 1), then the next-hardest, and so on. Enter each hole's stroke index from the course's real scorecard (1 = hardest); leave as-is to default to hole order.</p>
-          <div class="grid grid-cols-2 gap-2 mb-3">
+        <div class="flex items-center gap-3 mt-6 mb-2.5">
+          <h2 class="eyebrow">Tiebreaks</h2>
+          <span class="flex-1 hairline"></span>
+        </div>
+
+        <div class="card p-5 mb-4">
+          <div class="flex items-center gap-2 mb-1">
+            <span style="color:var(--grass-600)">${icon("card", 17)}</span>
+            <h3 class="font-bold">Hole handicaps</h3>
+          </div>
+          <p class="text-xs muted mb-4 leading-relaxed">
+            Only used to break ties. If two teams finish level, TeeBoard settles it on the
+            hardest hole (stroke index 1), then the next hardest — a scorecard playoff.
+            Enter each hole's stroke index from the course's real card; leave as-is to
+            default to hole order.
+          </p>
+          <div class="grid grid-cols-2 gap-1.5 mb-4">
             ${Array.from({ length: tournament.num_holes }, (_, idx) => idx + 1).map((h) => `
-              <div class="flex items-center justify-between gap-1 text-xs bg-gray-50 rounded px-2 py-1">
-                <span class="text-gray-500">H${holeLabel(tournament, h)} <span class="text-gray-400">(par ${par[h - 1]})</span></span>
-                <input data-handicap="${h}" type="number" min="1" max="${tournament.num_holes}" value="${handicapArr[h - 1]}" class="w-12 text-center px-1 py-1" />
+              <div class="flex items-center justify-between gap-1.5 rounded-lg pl-2 pr-1 py-1" style="background:var(--paper)">
+                <span class="eyebrow" style="letter-spacing:.06em">H${holeLabel(tournament, h)}
+                  <span class="muted-2">P${par[h - 1]}</span>
+                </span>
+                <input data-handicap="${h}" type="number" min="1" max="${tournament.num_holes}"
+                       value="${handicapArr[h - 1]}" aria-label="Stroke index for hole ${holeLabel(tournament, h)}"
+                       class="num-display text-center" style="width:2.6rem;padding:.3rem 0;font-size:1rem" />
               </div>
             `).join("")}
           </div>
-          <button id="save-handicaps-btn" class="btn-secondary w-full text-sm">Save Handicaps</button>
+          <button id="save-handicaps-btn" class="btn-secondary w-full">Save handicaps</button>
           <div id="handicap-status" class="text-xs mt-2"></div>
         </div>
 
-        <button id="toggle-status" class="btn-secondary w-full mb-4">${tournament.status === "active" ? "Close tournament" : "Reopen tournament"}</button>
+        <div class="flex items-center gap-3 mt-6 mb-2.5">
+          <h2 class="eyebrow">Settings</h2>
+          <span class="flex-1 hairline"></span>
+        </div>
 
-        <div class="card p-4" style="border-color:#fecaca;">
-          <h2 class="font-bold text-red-600 text-xs uppercase tracking-wide mb-2">Danger Zone</h2>
-          <p class="text-xs text-gray-500 mb-3">Deleting a tournament permanently removes all its teams, players, and scores. This can't be undone.</p>
-          <button id="delete-tournament-btn" class="btn-secondary w-full" style="color:#dc2626;border-color:#fecaca;">Delete Tournament</button>
-          <div id="delete-confirm-wrap" class="hidden mt-3 pt-3 border-t border-gray-100">
-            <label class="text-xs font-semibold text-gray-500">Type the tournament name to confirm: <b>${escapeHtml(tournament.name)}</b></label>
-            <input id="delete-confirm-input" placeholder="${escapeHtml(tournament.name)}" class="mb-2" />
-            <button id="delete-confirm-btn" class="w-full" style="background:#dc2626;color:white;border-radius:1rem;padding:.8rem 1.25rem;font-weight:700;">Permanently Delete</button>
+        <button id="toggle-status" class="btn-secondary w-full mb-2.5">${isActive ? "Close tournament" : "Reopen tournament"}</button>
+
+        <div class="card p-5" style="border-color:#F1CFD0">
+          <h3 class="eyebrow mb-2" style="color:var(--under)">Danger zone</h3>
+          <p class="text-xs muted mb-4">Deleting removes every team, player, and score in this tournament. It can't be undone.</p>
+          <button id="delete-tournament-btn" class="btn-danger w-full">Delete tournament</button>
+          <div id="delete-confirm-wrap" class="hidden mt-4 pt-4" style="border-top:1px solid var(--line)">
+            <label class="field-label">Type <b style="color:var(--ink)">${escapeHtml(tournament.name)}</b> to confirm</label>
+            <input id="delete-confirm-input" placeholder="${escapeHtml(tournament.name)}" class="mb-3" />
+            <button id="delete-confirm-btn" class="btn-danger-solid">Permanently delete</button>
           </div>
         </div>
       ` : `
-        <p class="text-xs text-gray-400 text-center">Only the organizer who created this tournament can manage roster imports and settings.</p>
+        <div class="card p-4 flex items-start gap-3">
+          <span class="shrink-0 mt-0.5 muted-2">${icon("lock", 18)}</span>
+          <p class="text-xs muted">Only the organizer who created this tournament can edit its roster and settings.</p>
+        </div>
       `}
     `;
 
@@ -812,7 +1022,7 @@ async function viewAdmin(tournamentId) {
         if (error) {
           toast("Couldn't delete: " + error.message, true);
           btn.disabled = false;
-          btn.textContent = "Permanently Delete";
+          btn.textContent = "Permanently delete";
           return;
         }
         removeMyTournament(tournament.id);
@@ -832,7 +1042,7 @@ async function viewAdmin(tournamentId) {
         });
         const statusEl = document.getElementById("handicap-status");
         if (!valid) {
-          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.className = "text-xs mt-2 status-err";
           statusEl.textContent = "Enter a stroke index (1 or higher) for every hole.";
           return;
         }
@@ -841,13 +1051,13 @@ async function viewAdmin(tournamentId) {
         const { error } = await sb.from("tournaments").update({ handicap: vals }).eq("id", tournament.id);
         btn.disabled = false;
         if (error) {
-          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.className = "text-xs mt-2 status-err";
           statusEl.textContent = "Couldn't save: " + error.message;
           return;
         }
         tournament.handicap = vals;
-        statusEl.className = "text-xs mt-2 text-green-700 font-semibold";
-        statusEl.textContent = "Saved — leaderboard ties will now use these for scorecard-playoff countback.";
+        statusEl.className = "text-xs mt-2 status-ok";
+        statusEl.textContent = "Saved — ties will now use these for scorecard-playoff countback.";
       });
 
       document.getElementById("toggle-status").addEventListener("click", async () => {
@@ -876,25 +1086,25 @@ async function viewAdmin(tournamentId) {
         const btn = document.getElementById("add-player-btn");
 
         if (!playerName) {
-          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.className = "text-xs mt-2 status-err";
           statusEl.textContent = "Enter a player name.";
           return;
         }
         if (teamChoice === "__new" && !newTeamName) {
-          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.className = "text-xs mt-2 status-err";
           statusEl.textContent = "Enter a team name.";
           return;
         }
 
         btn.disabled = true;
-        statusEl.className = "text-xs mt-2 text-gray-500";
+        statusEl.className = "text-xs mt-2 status-info";
         statusEl.textContent = "Adding…";
 
         const result = await addPlayerManually(teamChoice, newTeamName, playerName);
 
         btn.disabled = false;
         if (result.error) {
-          statusEl.className = "text-xs mt-2 text-red-600";
+          statusEl.className = "text-xs mt-2 status-err";
           statusEl.textContent = result.error;
           return;
         }
@@ -1119,14 +1329,17 @@ async function viewAdmin(tournamentId) {
 
 function viewJoin(prefillCode) {
   app.innerHTML = `
-    <h1 class="text-xl font-bold mb-4">Join a Tournament</h1>
-    <form id="code-form" class="card p-5 flex flex-col gap-4">
-      <div>
-        <label class="text-sm font-semibold">Tournament code</label>
-        <input name="code" required maxlength="8" style="text-transform:uppercase;letter-spacing:.2em;font-weight:700;font-size:1.3rem;text-align:center" value="${escapeHtml(prefillCode || "")}" />
-      </div>
-      <button class="btn-primary" type="submit">Find Tournament</button>
+    <div class="mb-4">
+      <div class="eyebrow mb-1">Player</div>
+      <h1 class="text-2xl">Join a tournament</h1>
+    </div>
+    <form id="code-form" class="card p-5">
+      <label class="field-label text-center">Tournament code</label>
+      <input name="code" required maxlength="8" autocapitalize="characters" autocomplete="off"
+             class="code-input mb-4" value="${escapeHtml(prefillCode || "")}" />
+      <button class="btn-primary w-full" type="submit">Find tournament</button>
     </form>
+    <p class="text-xs muted-2 text-center mt-3">Your organizer hands out the 5-character code — or scan their QR.</p>
     <div id="join-body"></div>
   `;
 
@@ -1135,10 +1348,10 @@ function viewJoin(prefillCode) {
     const code = new FormData(e.target).get("code").trim().toUpperCase();
     const btn = e.target.querySelector("button");
     btn.disabled = true;
-    btn.textContent = "Searching...";
+    btn.textContent = "Searching…";
     const { data: tournament, error } = await sb.from("tournaments").select("*").eq("join_code", code).maybeSingle();
     btn.disabled = false;
-    btn.textContent = "Find Tournament";
+    btn.textContent = "Find tournament";
     if (error || !tournament) {
       toast("No tournament found with that code", true);
       return;
@@ -1159,26 +1372,36 @@ async function renderTeamStep(tournament) {
   const savedName = load("bb_player_name", "");
   const body = document.getElementById("join-body");
   body.innerHTML = `
-    <div class="card p-5 mt-4">
-      <div class="font-semibold mb-3">${escapeHtml(tournament.name)}</div>
+    <div class="flex items-center gap-3 mt-6 mb-2.5">
+      <span class="eyebrow">Found it</span>
+      <span class="flex-1 hairline"></span>
+    </div>
 
-      <label class="text-sm font-semibold">Find your name</label>
-      <input id="name-search" placeholder="Start typing your name…" autocomplete="off" class="mb-2" />
-      <div id="name-search-loading" class="text-xs text-gray-400 mb-2">Loading roster…</div>
-      <div id="name-results" class="flex flex-col gap-2 mb-2"></div>
-      <p id="name-empty-note" class="hidden text-xs text-gray-400 mb-3">Nobody's been added to this tournament yet — ask your organizer, or set up your own team below.</p>
+    <div class="card overflow-hidden mb-3">
+      <div class="px-5 py-4" style="background:var(--ink-900);color:#fff">
+        <div class="eyebrow on-dark mb-1">Tournament</div>
+        <div class="display" style="font-size:1.5rem">${escapeHtml(tournament.name)}</div>
+      </div>
 
-      <button id="toggle-other-options" class="btn-ghost text-xs mb-1">Don't see your name? Use a team code or start a new team &rarr;</button>
+      <div class="p-5">
+        <label class="field-label">Find your name</label>
+        <input id="name-search" placeholder="Start typing your name…" autocomplete="off" class="mb-2" />
+        <div id="name-search-loading" class="eyebrow mb-2">Loading roster…</div>
+        <div id="name-results" class="flex flex-col gap-2 mb-2"></div>
+        <p id="name-empty-note" class="hidden text-xs muted-2 mb-3">Nobody's on this tournament's roster yet — ask your organizer, or set up your own team below.</p>
 
-      <div id="other-options" class="hidden mt-3 pt-3 border-t border-gray-100">
-        <label class="text-sm font-semibold">Your name</label>
-        <input id="player-name" placeholder="Your name" value="${escapeHtml(savedName)}" class="mb-3" />
+        <button id="toggle-other-options" class="btn-ghost mt-1">Not on the list? Use a team code ${icon("arrow", 13)}</button>
 
-        <div class="flex gap-2 mb-3">
-          <button id="mode-new" class="btn-secondary flex-1">Create a Team</button>
-          <button id="mode-existing" class="btn-secondary flex-1">Join a Team</button>
+        <div id="other-options" class="hidden mt-4 pt-4" style="border-top:1px solid var(--line)">
+          <label class="field-label">Your name</label>
+          <input id="player-name" placeholder="Your name" value="${escapeHtml(savedName)}" class="mb-4" />
+
+          <div class="flex gap-2 mb-3">
+            <button id="mode-new" class="btn-secondary flex-1 text-sm">Create a team</button>
+            <button id="mode-existing" class="btn-secondary flex-1 text-sm">Join a team</button>
+          </div>
+          <div id="team-mode-body"></div>
         </div>
-        <div id="team-mode-body"></div>
       </div>
     </div>
   `;
@@ -1204,12 +1427,12 @@ async function renderTeamStep(tournament) {
 
   function renderNameResults(list) {
     nameResults.innerHTML = list.map((m) => `
-      <button data-team-id="${escapeHtml(m.team_id)}" data-team-name="${escapeHtml(m.teams.name)}" data-team-code="${escapeHtml(m.teams.join_code)}" data-player-name="${escapeHtml(m.player_name)}" class="card p-3 text-left flex items-center justify-between hover:shadow-md transition">
-        <div>
-          <div class="font-semibold text-sm">${escapeHtml(m.player_name)}</div>
-          <div class="text-xs text-gray-400">${escapeHtml(m.teams.name)}</div>
+      <button data-team-id="${escapeHtml(m.team_id)}" data-team-name="${escapeHtml(m.teams.name)}" data-team-code="${escapeHtml(m.teams.join_code)}" data-player-name="${escapeHtml(m.player_name)}" class="row-link text-left" style="padding:.7rem .85rem">
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-sm truncate">${escapeHtml(m.player_name)}</div>
+          <div class="eyebrow mt-0.5">${escapeHtml(m.teams.name)}</div>
         </div>
-        <span class="btn-ghost">Go &rarr;</span>
+        <span class="btn-ghost shrink-0">Go ${icon("arrow", 13)}</span>
       </button>
     `).join("");
     nameResults.querySelectorAll("button[data-team-id]").forEach((btn) => {
@@ -1231,7 +1454,7 @@ async function renderTeamStep(tournament) {
     if (!q) return renderNameResults([]);
     const matches = roster.filter((m) => m.player_name.toLowerCase().includes(q)).slice(0, 8);
     if (!matches.length) {
-      nameResults.innerHTML = `<div class="text-xs text-gray-400 p-1">No match yet — keep typing, or use a team code below.</div>`;
+      nameResults.innerHTML = `<div class="text-xs muted-2 p-1">No match yet — keep typing, or use a team code below.</div>`;
       return;
     }
     renderNameResults(matches);
@@ -1240,9 +1463,9 @@ async function renderTeamStep(tournament) {
   // ---- Fallback: team code or brand-new team, for anyone not pre-added ----
   document.getElementById("mode-new").addEventListener("click", () => {
     document.getElementById("team-mode-body").innerHTML = `
-      <label class="text-sm font-semibold">Team name</label>
+      <label class="field-label">Team name</label>
       <input id="team-name" placeholder="e.g. The Duffers" class="mb-3" />
-      <button id="submit-new-team" class="btn-primary w-full">Create Team</button>
+      <button id="submit-new-team" class="btn-primary w-full">Create team</button>
     `;
     document.getElementById("submit-new-team").addEventListener("click", async () => {
       const playerName = document.getElementById("player-name").value.trim();
@@ -1271,9 +1494,10 @@ async function renderTeamStep(tournament) {
 
   document.getElementById("mode-existing").addEventListener("click", () => {
     document.getElementById("team-mode-body").innerHTML = `
-      <label class="text-sm font-semibold">Team code</label>
-      <input id="team-code" maxlength="6" style="text-transform:uppercase;letter-spacing:.2em;font-weight:700;text-align:center" class="mb-3" />
-      <button id="submit-join-team" class="btn-primary w-full">Join Team</button>
+      <label class="field-label text-center">Team code</label>
+      <input id="team-code" maxlength="6" autocapitalize="characters" autocomplete="off"
+             class="code-input mb-3" style="font-size:1.9rem" />
+      <button id="submit-join-team" class="btn-primary w-full">Join team</button>
     `;
     document.getElementById("submit-join-team").addEventListener("click", async () => {
       const playerName = document.getElementById("player-name").value.trim();
@@ -1299,11 +1523,11 @@ async function renderTeamStep(tournament) {
 // ---------- SCORECARD ----------
 
 async function viewTeam(teamId) {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
 
   const { data: team, error: teamErr } = await sb.from("teams").select("*, tournaments(*)").eq("id", teamId).single();
   if (teamErr || !team) {
-    app.innerHTML = `<div class="card p-5 mt-6">Team not found.</div>`;
+    app.innerHTML = notFoundHtml("Team");
     return;
   }
   const tournament = team.tournaments;
@@ -1333,42 +1557,31 @@ async function viewTeam(teamId) {
 
     if (mode === "review") {
       app.innerHTML = `
-        <div class="mb-3">
-          <h1 class="text-xl font-bold">Review &amp; Sign</h1>
-          <p class="text-sm text-gray-500">${escapeHtml(team.name)} &middot; ${escapeHtml(tournament.name)}</p>
+        <div class="mb-4">
+          <div class="eyebrow mb-1">Final check</div>
+          <h1 class="text-2xl">Review &amp; sign</h1>
+          <p class="text-sm muted mt-1">${escapeHtml(team.name)} &middot; ${escapeHtml(tournament.name)}</p>
         </div>
-        <div class="card overflow-hidden mb-4">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-xs text-gray-400 uppercase tracking-wide">
-                <th class="p-2 text-left font-semibold">Hole</th>
-                <th class="p-2 text-right font-semibold">Par</th>
-                <th class="p-2 text-right font-semibold">Strokes</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${par.map((p, i) => `
-                <tr class="border-t border-gray-100">
-                  <td class="p-2">${holeLabel(tournament, i + 1)}</td>
-                  <td class="p-2 text-right text-gray-400">${p}</td>
-                  <td class="p-2 text-right"><span class="hole-mark hole-mark-sm ${holeMarkClass(scoreMap[i + 1], p)}" style="margin-left:auto;">${scoreMap[i + 1] ?? "—"}</span></td>
-                </tr>
-              `).join("")}
-              <tr class="border-t border-gray-200 font-bold">
-                <td class="p-2">Total</td>
-                <td class="p-2 text-right text-gray-400">${totalPar}</td>
-                <td class="p-2 text-right">${totalStrokes}</td>
-              </tr>
-            </tbody>
-          </table>
+
+        <div class="card overflow-hidden mb-3">
+          ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}
         </div>
+
+        <div class="card p-4 mb-3 flex items-center justify-between">
+          <span class="eyebrow">Total</span>
+          <span class="flex items-baseline gap-3">
+            <span class="num-display" style="font-size:1.6rem">${totalStrokes}</span>
+            <span class="to-par ${toParClass(toPar)}" style="font-size:1.6rem">${toParLabel(toPar)}</span>
+          </span>
+        </div>
+
         <div class="card p-5 mb-4">
-          <p class="text-sm text-gray-600 mb-3">By signing, you confirm this scorecard is accurate for <b>${escapeHtml(team.name)}</b>. Once signed it locks — ask your organizer if you need a correction.</p>
-          <label class="text-sm font-semibold">Type your name to sign</label>
-          <input id="sign-name" placeholder="Your name" value="${escapeHtml(load("bb_player_name", ""))}" class="mb-3" />
+          <p class="text-sm muted mb-4">By signing, you confirm this card is accurate for <b style="color:var(--ink)">${escapeHtml(team.name)}</b>. Once signed it locks — ask your organizer if you need a correction.</p>
+          <label class="field-label">Type your name to sign</label>
+          <input id="sign-name" placeholder="Your name" value="${escapeHtml(load("bb_player_name", ""))}" class="mb-4" />
           <div class="flex gap-2">
             <button id="back-to-edit" class="btn-secondary flex-1">Back</button>
-            <button id="sign-submit" class="btn-primary flex-1">Sign &amp; Submit</button>
+            <button id="sign-submit" class="btn-green flex-1">Sign &amp; submit</button>
           </div>
         </div>
       `;
@@ -1384,7 +1597,7 @@ async function viewTeam(teamId) {
         if (error) {
           toast("Couldn't sign: " + error.message, true);
           btn.disabled = false;
-          btn.textContent = "Sign & Submit";
+          btn.textContent = "Sign & submit";
           return;
         }
         store("bb_player_name", name);
@@ -1397,64 +1610,109 @@ async function viewTeam(teamId) {
       return;
     }
 
-    let holesHtml = "";
-    for (let h = 1; h <= tournament.num_holes; h++) {
+    // Once signed the card is read-only, so show the same compact grid the
+    // public scorecard view uses rather than 18 rows of dead steppers.
+    // Score entry, grouped into nines so an 18-hole card has a natural
+    // turn at the halfway point rather than one endless scroll.
+    let holesHtml = isSigned
+      ? `<div class="card overflow-hidden">${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}</div>`
+      : "";
+    for (let h = 1; !isSigned && h <= tournament.num_holes; h++) {
+      if (tournament.num_holes > 9 && (h === 1 || h === 10)) {
+        holesHtml += `
+          <div class="flex items-center gap-3 ${h === 1 ? "" : "mt-4 "}mb-1">
+            <span class="eyebrow">${h === 1 ? "Front nine" : "Back nine"}</span>
+            <span class="flex-1 hairline"></span>
+          </div>`;
+      }
       const val = scoreMap[h] ?? "";
-      holesHtml += isSigned ? `
-        <div class="card p-3 flex items-center justify-between">
-          <div>
-            <div class="font-bold">Hole ${holeLabel(tournament, h)}</div>
-            <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
+      const entered = scoreMap[h] != null;
+      holesHtml += `
+        <div class="card flex items-center justify-between pl-3 pr-2.5 py-2"
+             style="${entered ? "" : "background:#FCFDFC;"}">
+          <div class="flex items-center gap-3">
+            <span class="num-display" style="font-size:1.4rem;min-width:1.6rem;color:${entered ? "var(--ink)" : "var(--ink-3)"}">${holeLabel(tournament, h)}</span>
+            <span class="eyebrow">Par ${par[h - 1]}</span>
           </div>
-          <div class="hole-mark ${holeMarkClass(scoreMap[h], par[h - 1])}">${val || "—"}</div>
-        </div>` : `
-        <div class="card p-3 flex items-center justify-between">
-          <div>
-            <div class="font-bold">Hole ${holeLabel(tournament, h)}</div>
-            <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
-          </div>
-          <div class="flex items-center gap-2">
-            <button data-hole="${h}" data-delta="-1" class="score-btn bg-gray-100">-</button>
-            <input data-hole="${h}" type="number" inputmode="numeric" min="1" max="15" value="${val}" class="w-16 text-center" />
-            <button data-hole="${h}" data-delta="1" class="score-btn bg-gray-100">+</button>
-          </div>
+          ${isSigned ? `
+            <div class="hole-mark ${holeMarkClass(scoreMap[h], par[h - 1])}">${val || "—"}</div>
+          ` : `
+            <div class="flex items-center gap-1.5">
+              <button data-hole="${h}" data-delta="-1" class="step-btn" aria-label="One less on hole ${holeLabel(tournament, h)}">−</button>
+              <input data-hole="${h}" type="number" inputmode="numeric" min="1" max="15" value="${val}"
+                     class="step-value" aria-label="Strokes on hole ${holeLabel(tournament, h)}" placeholder="–" />
+              <button data-hole="${h}" data-delta="1" class="step-btn" aria-label="One more on hole ${holeLabel(tournament, h)}">+</button>
+            </div>
+          `}
         </div>`;
     }
 
     app.innerHTML = `
-      <div class="mb-3">
-        <h1 class="text-xl font-bold">${escapeHtml(team.name)}</h1>
-        <p class="text-sm text-gray-500">${escapeHtml(tournament.name)} &middot; team code <b>${team.join_code}</b></p>
-        <p class="text-xs text-gray-400">Players: ${(members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "—"}</p>
-      </div>
+      <section class="panel-dark px-5 pt-5 pb-4 mb-3">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="eyebrow on-dark mb-1">${escapeHtml(tournament.name)}</div>
+            <h1 class="display truncate" style="font-size:1.9rem;color:#fff">${escapeHtml(team.name)}</h1>
+          </div>
+          <span class="pill on-dark shrink-0">${escapeHtml(team.join_code)}</span>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
+          <div>
+            <div class="to-par on-dark ${toParClass(toPar)}" style="font-size:2rem;display:block">${thru ? toParLabel(toPar) : "—"}</div>
+            <div class="eyebrow on-dark mt-1">To par</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:2rem;color:#fff">${totalStrokes || "—"}</div>
+            <div class="eyebrow on-dark mt-1">Strokes</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:2rem;color:#fff">${thru}<span style="font-size:1.1rem;color:rgba(255,255,255,.45)">/${tournament.num_holes}</span></div>
+            <div class="eyebrow on-dark mt-1">Thru</div>
+          </div>
+        </div>
+
+        ${(members || []).length ? `
+          <p class="text-xs mt-3" style="color:rgba(255,255,255,.45)">${(members || []).map((m) => escapeHtml(m.player_name)).join(" · ")}</p>
+        ` : ""}
+      </section>
 
       ${isSigned ? `
-        <div class="card p-4 mb-4 text-center" style="background:#f0fdf4;border-color:#bbf7d0;">
-          <div class="text-sm font-bold text-green-700">✓ Signed by ${escapeHtml(team.signed_by)}</div>
-          <div class="text-xs text-green-600 mt-0.5">Scorecard submitted — nice round!</div>
+        <div class="card p-3.5 mb-3 flex items-center gap-3" style="background:var(--grass-100);border-color:var(--grass-200)">
+          <span class="shrink-0" style="color:var(--grass-700)">${icon("check", 20)}</span>
+          <div>
+            <div class="text-sm font-bold" style="color:var(--grass-700)">Signed by ${escapeHtml(team.signed_by)}</div>
+            <div class="text-xs" style="color:var(--grass-600)">Card submitted — nice round.</div>
+          </div>
         </div>
       ` : ""}
 
-      <div class="card p-4 flex items-center justify-around text-center mb-4">
-        <div><div class="text-2xl font-black text-green-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
-        <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
-        <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
+      <a href="#/leaderboard/${tournament.id}" class="btn-secondary w-full mb-5">
+        ${icon("board", 17)} View live leaderboard
+      </a>
+
+      <div class="flex items-center gap-3 mb-2.5">
+        <h2 class="eyebrow">${isSigned ? "Final scorecard" : "Enter scores"}</h2>
+        <span class="flex-1 hairline"></span>
+        ${!isSigned ? `<span class="eyebrow">${thru} of ${tournament.num_holes}</span>` : ""}
       </div>
 
-      <a href="#/leaderboard/${tournament.id}" class="btn-primary block text-center mb-4">View Live Leaderboard</a>
+      ${isSigned ? `
+        <p class="text-xs muted-2 mb-3 flex items-center gap-1.5">
+          <span class="hole-mark hole-mark-sm birdie">3</span> birdie
+          <span class="hole-mark hole-mark-sm bogey ml-2">5</span> bogey
+        </p>` : ""}
 
-      <h2 class="font-bold text-gray-600 text-sm uppercase mb-2">${isSigned ? "Final Scorecard" : "Enter Scores"}</h2>
-      ${isSigned ? `<p class="text-xs text-gray-400 mb-2"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">−1</span> birdie (1 under par) &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">+1</span> bogey (1 over par)</p>` : ""}
-      <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
+      <div class="grid grid-cols-1 gap-2 mb-5">${holesHtml}</div>
 
       ${!isSigned ? `
-        <button id="review-sign-btn" class="btn-primary w-full" ${allEntered ? "" : "disabled"}>Review &amp; Sign Scorecard</button>
-        ${!allEntered ? `<p class="text-xs text-gray-400 text-center mt-2">Enter all ${tournament.num_holes} holes to sign and submit.</p>` : ""}
+        <button id="review-sign-btn" class="btn-green w-full" ${allEntered ? "" : "disabled"}>Review &amp; sign scorecard</button>
+        ${!allEntered ? `<p class="text-xs muted-2 text-center mt-2.5">All ${tournament.num_holes} holes need a score before you can sign.</p>` : ""}
       ` : ""}
     `;
 
     if (!isSigned) {
-      app.querySelectorAll("button.score-btn").forEach((btn) => {
+      app.querySelectorAll("button.step-btn").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const hole = parseInt(btn.dataset.hole, 10);
           const delta = parseInt(btn.dataset.delta, 10);
@@ -1499,16 +1757,19 @@ async function viewTeam(teamId) {
 // ---------- LEADERBOARD ----------
 
 async function viewLeaderboard(tournamentId) {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
 
   const { data: tournament, error } = await sb.from("tournaments").select("*").eq("id", tournamentId).single();
   if (error || !tournament) {
-    app.innerHTML = `<div class="card p-5 mt-6">Tournament not found.</div>`;
+    app.innerHTML = notFoundHtml("Tournament");
     return;
   }
-  headerSub.textContent = tournament.status === "active" ? "🔵 live" : "closed";
+  headerSub.innerHTML = tournament.status === "active"
+    ? `<span class="pill live"><span class="dot"></span>Live</span>`
+    : `<span class="pill on-dark">Final</span>`;
 
   const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
+
   // Stroke index per hole (1 = hardest), used only to break ties once a team
   // has finished every hole — a "scorecard playoff" countback. Falls back to
   // hole order if the organizer hasn't set real handicaps for this course.
@@ -1551,17 +1812,17 @@ async function viewLeaderboard(tournamentId) {
       (t.scores || []).forEach((s) => {
         strokes += s.strokes;
         parSum += par[s.hole_number - 1] ?? 4;
-        thru++;
         scoreMap[s.hole_number] = s.strokes;
+        thru++;
       });
       return {
         id: t.id,
         name: t.name,
         players: (t.team_members || []).map((m) => m.player_name),
         strokes, thru,
+        scoreMap,
         toPar: strokes - parSum,
         signed: !!t.signed_at,
-        scoreMap,
       };
     });
 
@@ -1581,38 +1842,60 @@ async function viewLeaderboard(tournamentId) {
       r.tied = r.thru > 0 && rows.some((o, j) => j !== i && o.place === r.place);
     });
 
+    const isLive = tournament.status === "active";
+
     app.innerHTML = `
-      <h1 class="text-xl font-bold mb-1">${escapeHtml(tournament.name)}</h1>
-      <p class="text-sm text-gray-500 mb-4">${tournament.course_name ? escapeHtml(tournament.course_name) + " · " : ""}${tournament.num_holes} holes &middot; code ${tournament.join_code}</p>
+      <section class="panel-dark px-5 pt-5 pb-5 mb-2.5">
+        <div class="eyebrow on-dark mb-2">Leaderboard</div>
+        <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(tournament.name)}</h1>
+        ${tournament.course_name ? `<p class="text-sm mt-2" style="color:rgba(255,255,255,.55)">${escapeHtml(tournament.course_name)}</p>` : ""}
+        <div class="flex items-center gap-2 mt-4 pt-3.5" style="border-top:1px solid rgba(255,255,255,.09)">
+          <span class="pill on-dark">${tournament.num_holes} holes</span>
+          <span class="pill on-dark">Code ${escapeHtml(tournament.join_code)}</span>
+          ${!isLive ? `<span class="pill on-dark">Closed</span>` : ""}
+        </div>
+      </section>
 
       <div class="card overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-xs text-gray-400 uppercase tracking-wide">
-              <th class="p-3 text-left font-semibold"></th>
-              <th class="p-3 text-left font-semibold">Team</th>
-              <th class="p-3 text-right font-semibold">Score</th>
-              <th class="p-3 text-right font-semibold">Thru</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.length === 0 ? `<tr><td colspan="4" class="p-4 text-center text-gray-400">No teams yet</td></tr>` : ""}
-            ${rows.map((r, i) => `
-              <tr class="border-t border-gray-100">
-                <td class="p-3 align-top"><span class="rank-badge${r.place === 1 && r.thru ? " gold" : ""}">${r.tied ? "T" : ""}${r.place}</span></td>
-                <td class="p-3 align-top">
-                  <div class="font-semibold">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed & submitted">F</span>` : ""}</div>
-                  ${r.players.length ? `<div class="text-xs text-gray-400 mt-0.5">${escapeHtml(r.players.join(", "))}</div>` : ""}
-                  <a href="#/scorecard/${r.id}" class="btn-ghost text-xs mt-1 inline-block">View scorecard &rarr;</a>
-                </td>
-                <td class="p-3 text-right align-top">${r.thru ? `<span class="par-chip ${r.toPar < 0 ? "under" : "flat"}">${toParLabel(r.toPar)}</span>` : `<span class="text-gray-300">—</span>`}</td>
-                <td class="p-3 text-right text-gray-500 align-top">${r.thru}/${tournament.num_holes}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
+        <div class="lb-head">
+          <span></span>
+          <span>Team</span>
+          <span class="text-right">Score</span>
+          <span class="text-right">Thru</span>
+        </div>
+        ${rows.length === 0 ? `
+          <div class="p-8 text-center">
+            <div class="mx-auto mb-3 flex items-center justify-center" style="color:var(--ink-3)">${icon("users", 30)}</div>
+            <p class="font-semibold mb-1">No teams yet</p>
+            <p class="text-sm muted">Share code <b class="num">${escapeHtml(tournament.join_code)}</b> to get players on the board.</p>
+          </div>` : ""}
+        ${rows.map((r) => {
+          const leading = r.place === 1 && r.thru > 0;
+          return `
+          <a href="#/scorecard/${r.id}" class="lb-row${leading ? " leader" : ""}">
+            <span class="rank${leading ? " lead" : ""}${r.tied ? " tied" : ""}">${r.tied ? "T" : ""}${r.place}</span>
+            <span class="min-w-0">
+              <span class="font-bold block truncate">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed &amp; submitted">F</span>` : ""}</span>
+              ${r.players.length ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.players.join(" · "))}</span>` : ""}
+            </span>
+            <span class="text-right">
+              ${r.thru
+                ? `<span class="to-par ${toParClass(r.toPar)}" style="font-size:1.65rem">${toParLabel(r.toPar)}</span>`
+                : `<span class="muted-2">—</span>`}
+            </span>
+            <span class="text-right num-display muted" style="font-size:1.15rem">
+              ${r.thru || "–"}<span class="text-xs muted-2">/${tournament.num_holes}</span>
+            </span>
+          </a>`;
+        }).join("")}
       </div>
-      <p class="text-xs text-gray-400 text-center mt-3">Updates live as teams enter scores</p>
+
+      <div class="flex items-center justify-center gap-2 mt-3.5">
+        <span class="eyebrow">${isLive ? "Updating live as scores come in" : "Tournament closed"}</span>
+      </div>
+      <p class="text-center text-xs muted-2 mt-2">
+        <span class="to-par under font-bold">−</span> under par &nbsp;·&nbsp; tap a team for their full card
+      </p>
     `;
   }
 
@@ -1633,7 +1916,7 @@ async function viewLeaderboard(tournamentId) {
 // ---------- READ-ONLY SCORECARD (from the leaderboard's "View scorecard") ----------
 
 async function viewScorecard(teamId) {
-  app.innerHTML = `<div class="text-center text-gray-400 mt-10">Loading...</div>`;
+  app.innerHTML = loadingHtml();
 
   const { data: team, error } = await sb
     .from("teams")
@@ -1641,7 +1924,7 @@ async function viewScorecard(teamId) {
     .eq("id", teamId)
     .single();
   if (error || !team) {
-    app.innerHTML = `<div class="card p-5 mt-6">Team not found.</div>`;
+    app.innerHTML = notFoundHtml("Team");
     return;
   }
   const tournament = team.tournaments;
@@ -1662,42 +1945,58 @@ async function viewScorecard(teamId) {
     }
     const toPar = totalStrokes - totalPar;
 
-    let holesHtml = "";
-    for (let h = 1; h <= tournament.num_holes; h++) {
-      holesHtml += `
-        <div class="card p-3 flex items-center justify-between">
-          <div>
-            <div class="font-bold">Hole ${holeLabel(tournament, h)}</div>
-            <div class="text-xs text-gray-400">Par ${par[h - 1]}</div>
-          </div>
-          <div class="hole-mark ${holeMarkClass(scoreMap[h], par[h - 1])}">${scoreMap[h] ?? "—"}</div>
-        </div>`;
-    }
-
     app.innerHTML = `
-      <div class="mb-3">
-        <h1 class="text-xl font-bold">${escapeHtml(team.name)}</h1>
-        <p class="text-sm text-gray-500">${escapeHtml(tournament.name)}</p>
-        <p class="text-xs text-gray-400">Players: ${(team.team_members || []).map((m) => escapeHtml(m.player_name)).join(", ") || "—"}</p>
-      </div>
+      <section class="panel-dark px-5 pt-5 pb-4 mb-3">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="eyebrow on-dark mb-1">${escapeHtml(tournament.name)}</div>
+            <h1 class="display truncate" style="font-size:1.9rem;color:#fff">${escapeHtml(team.name)}</h1>
+          </div>
+          ${team.signed_at ? `<span class="pill on-dark shrink-0">Signed</span>` : ""}
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
+          <div>
+            <div class="to-par on-dark ${toParClass(toPar)}" style="font-size:2rem;display:block">${thru ? toParLabel(toPar) : "—"}</div>
+            <div class="eyebrow on-dark mt-1">To par</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:2rem;color:#fff">${totalStrokes || "—"}</div>
+            <div class="eyebrow on-dark mt-1">Strokes</div>
+          </div>
+          <div>
+            <div class="num-display" style="font-size:2rem;color:#fff">${thru}<span style="font-size:1.1rem;color:rgba(255,255,255,.45)">/${tournament.num_holes}</span></div>
+            <div class="eyebrow on-dark mt-1">Thru</div>
+          </div>
+        </div>
+
+        ${(team.team_members || []).length ? `
+          <p class="text-xs mt-3" style="color:rgba(255,255,255,.45)">${(team.team_members || []).map((m) => escapeHtml(m.player_name)).join(" · ")}</p>
+        ` : ""}
+      </section>
 
       ${team.signed_at ? `
-        <div class="card p-3 mb-4 text-center" style="background:#f0fdf4;border-color:#bbf7d0;">
-          <div class="text-sm font-bold text-green-700">✓ Signed by ${escapeHtml(team.signed_by || "")}</div>
+        <div class="card p-3.5 mb-3 flex items-center gap-3" style="background:var(--grass-100);border-color:var(--grass-200)">
+          <span class="shrink-0" style="color:var(--grass-700)">${icon("check", 20)}</span>
+          <div class="text-sm font-bold" style="color:var(--grass-700)">Signed by ${escapeHtml(team.signed_by || "")}</div>
         </div>
       ` : ""}
 
-      <div class="card p-4 flex items-center justify-around text-center mb-3">
-        <div><div class="text-2xl font-black text-green-700">${thru ? toParLabel(toPar) : "—"}</div><div class="text-xs text-gray-400">Score</div></div>
-        <div><div class="text-2xl font-black">${totalStrokes || "—"}</div><div class="text-xs text-gray-400">Strokes</div></div>
-        <div><div class="text-2xl font-black">${thru}/${tournament.num_holes}</div><div class="text-xs text-gray-400">Thru</div></div>
+      <div class="flex items-center gap-3 mb-2.5">
+        <h2 class="eyebrow">Scorecard</h2>
+        <span class="flex-1 hairline"></span>
       </div>
 
-      <p class="text-xs text-gray-400 text-center mb-4"><span class="hole-mark hole-mark-sm birdie" style="margin-right:.35rem;vertical-align:middle;">−1</span> birdie (1 under par) &nbsp; <span class="hole-mark hole-mark-sm bogey" style="margin:0 .35rem;vertical-align:middle;">+1</span> bogey (1 over par)</p>
+      <div class="card overflow-hidden mb-3">
+        ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1)}
+      </div>
 
-      <div class="grid grid-cols-1 gap-2 mb-4">${holesHtml}</div>
+      <p class="text-xs muted-2 mb-5 flex items-center gap-1.5">
+        <span class="hole-mark hole-mark-sm birdie">3</span> birdie
+        <span class="hole-mark hole-mark-sm bogey ml-2">5</span> bogey
+      </p>
 
-      <a href="#/leaderboard/${tournament.id}" class="btn-secondary block text-center">Back to Leaderboard</a>
+      <a href="#/leaderboard/${tournament.id}" class="btn-secondary w-full">${icon("board", 17)} Back to leaderboard</a>
     `;
   }
 
