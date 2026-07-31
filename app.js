@@ -979,6 +979,18 @@ async function viewAdmin(tournamentId) {
           <span class="flex-1 hairline"></span>
         </div>
 
+        ${tournament.num_holes === 9 ? `
+          <div class="card p-5 mb-2.5">
+            <label class="field-label">Which nine is this?</label>
+            <p class="text-xs muted mb-3">Only changes the hole numbers shown on cards and the leaderboard — scores already entered stay exactly where they are.</p>
+            <select id="start-hole-select">
+              <option value="1"${(tournament.start_hole || 1) === 1 ? " selected" : ""}>Front nine — holes 1–9</option>
+              <option value="10"${(tournament.start_hole || 1) === 10 ? " selected" : ""}>Back nine — holes 10–18</option>
+            </select>
+            <div id="start-hole-status" class="text-xs mt-2"></div>
+          </div>
+        ` : ""}
+
         <button id="toggle-status" class="btn-secondary w-full mb-2.5">${isActive ? "Close tournament" : "Reopen tournament"}</button>
 
         <div class="card p-5" style="border-color:#F1CFD0">
@@ -1029,6 +1041,26 @@ async function viewAdmin(tournamentId) {
         toast("Tournament deleted");
         location.hash = "#/";
       });
+
+      const startHoleSelect = document.getElementById("start-hole-select");
+      if (startHoleSelect) {
+        startHoleSelect.addEventListener("change", async () => {
+          const val = parseInt(startHoleSelect.value, 10);
+          const statusEl = document.getElementById("start-hole-status");
+          startHoleSelect.disabled = true;
+          const { error } = await sb.from("tournaments").update({ start_hole: val }).eq("id", tournament.id);
+          startHoleSelect.disabled = false;
+          if (error) {
+            statusEl.className = "text-xs mt-2 status-err";
+            statusEl.textContent = "Couldn't save: " + error.message;
+            startHoleSelect.value = String(tournament.start_hole || 1);
+            return;
+          }
+          tournament.start_hole = val;
+          toast(val === 10 ? "Now showing holes 10–18" : "Now showing holes 1–9");
+          render();
+        });
+      }
 
       document.getElementById("save-handicaps-btn").addEventListener("click", async () => {
         const inputs = app.querySelectorAll("[data-handicap]");
