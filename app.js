@@ -170,6 +170,311 @@ function scorecardGridHtml(par, scoreMap, startHole = 1, yardage = null, handica
   return blocks.join(`<div style="height:1px;background:var(--line-2)"></div>`);
 }
 
+function tournamentPar(tournament) {
+  return tournament.par && tournament.par.length === tournament.num_holes
+    ? tournament.par
+    : Array(tournament.num_holes).fill(4);
+}
+
+// Turns raw team rows into a sorted leaderboard with place/tied set. Shared by
+// the live leaderboard and the admin top-3 export, so the two can never
+// disagree about who actually won.
+function buildLeaderboard(tournament, teams) {
+  const par = tournamentPar(tournament);
+
+  // Stroke index per hole (1 = hardest), used only to break ties once a team
+  // has finished every hole — a "scorecard playoff" countback. Falls back to
+  // hole order if the organizer hasn't set real handicaps for this course.
+  const handicap = tournament.handicap && tournament.handicap.length === tournament.num_holes
+    ? tournament.handicap
+    : Array.from({ length: tournament.num_holes }, (_, i) => i + 1);
+  const countbackOrder = Array.from({ length: tournament.num_holes }, (_, i) => i + 1)
+    .sort((a, b) => handicap[a - 1] - handicap[b - 1]);
+
+  function countbackKey(row) {
+    let cum = 0;
+    return countbackOrder.map((h) => (cum += row.scoreMap[h] ?? 0));
+  }
+
+  // Full ordering: unstarted teams last, then by score-to-par, then (once
+  // both teams have finished every hole) by countback on the hardest holes
+  // first. Returns 0 only when two teams are genuinely inseparable — that's
+  // when the leaderboard shows them tied with a "T".
+  function compareRows(a, b) {
+    if ((a.thru === 0) !== (b.thru === 0)) return a.thru === 0 ? 1 : -1;
+    if (a.toPar !== b.toPar) return a.toPar - b.toPar;
+    if (a.thru === tournament.num_holes && b.thru === tournament.num_holes) {
+      const ak = countbackKey(a), bk = countbackKey(b);
+      for (let i = 0; i < ak.length; i++) {
+        if (ak[i] !== bk[i]) return ak[i] - bk[i];
+      }
+    }
+    return b.thru - a.thru;
+  }
+
+  const rows = (teams || []).map((t) => {
+    let strokes = 0, parSum = 0, thru = 0;
+    const scoreMap = {};
+    (t.scores || []).forEach((s) => {
+      strokes += s.strokes;
+      parSum += par[s.hole_number - 1] ?? 4;
+      scoreMap[s.hole_number] = s.strokes;
+      thru++;
+    });
+    return {
+      id: t.id,
+      name: t.name,
+      players: (t.team_members || []).map((m) => m.player_name),
+      strokes, thru,
+      scoreMap,
+      toPar: strokes - parSum,
+      signed: !!t.signed_at,
+    };
+  });
+
+  rows.sort(compareRows);
+
+  // Places skip after ties (1, 2, 2, 4 …). The countback above already
+  // resolves most ties into a real order; "T" only shows when two or more
+  // teams are still fully identical after it.
+  let place = 0;
+  rows.forEach((r, i) => {
+    const prev = rows[i - 1];
+    const same = prev && r.thru > 0 && prev.thru > 0 && compareRows(prev, r) === 0;
+    place = same ? place : i + 1;
+    r.place = place;
+  });
+  rows.forEach((r, i) => {
+    r.tied = r.thru > 0 && rows.some((o, j) => j !== i && o.place === r.place);
+  });
+
+  return rows;
+}
+
+// ---------- top-3 podium image ----------
+// Draws a shareable 1080x1350 card on a canvas rather than screenshotting the
+// DOM, so the output is the same everywhere and doesn't need a library.
+
+const PODIUM_METAL = [
+  { fill: "#E3B23C", edge: "#A97C10", ink: "#3A2900", label: "1ST" },
+  { fill: "#C2CBD1", edge: "#8B979E", ink: "#2B3237", label: "2ND" },
+  { fill: "#C08552", edge: "#8A5B2E", ink: "#331E08", label: "3RD" },
+];
+
+function drawRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Shrinks text until it fits `max` px wide, so long team names never overflow.
+function fitText(ctx, text, max, weight, startPx, family) {
+  let px = startPx;
+  do {
+    ctx.font = `${weight} ${px}px ${family}`;
+    if (ctx.measureText(text).width <= max) break;
+    px -= 2;
+  } while (px > 16);
+  return px;
+}
+
+function renderPodiumCanvas(tournament, rows) {
+  const W = 1080, H = 1350;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  const COND = "'Barlow Condensed', sans-serif";
+  const SANS = "'Archivo', sans-serif";
+
+  // background — the same near-black panel as the app, with a soft glow
+  ctx.fillStyle = "#08110C";
+  ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W / 2, -180, 0, W / 2, -180, 1100);
+  glow.addColorStop(0, "rgba(38,72,53,.95)");
+  glow.addColorStop(1, "rgba(8,17,12,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // faint contour texture
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,.028)";
+  ctx.lineWidth = 2;
+  for (let x = -H; x < W + H; x += 70) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + H, H); ctx.stroke();
+  }
+  ctx.restore();
+
+  // top light-bar
+  const bar = ctx.createLinearGradient(0, 0, W, 0);
+  bar.addColorStop(0, "#23883F"); bar.addColorStop(.45, "#4CCB78"); bar.addColorStop(1, "#23883F");
+  ctx.fillStyle = bar;
+  ctx.fillRect(0, 0, W, 8);
+
+  // header
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(255,255,255,.5)";
+  ctx.font = `600 30px ${COND}`;
+  ctx.letterSpacing = "6px";
+  // Don't claim a result is final while scoring is still open.
+  ctx.fillText(tournament.status === "active" ? "CURRENT STANDINGS" : "FINAL RESULTS", 80, 130);
+  ctx.letterSpacing = "0px";
+
+  ctx.fillStyle = "#fff";
+  const namePx = fitText(ctx, tournament.name.toUpperCase(), W - 160, 700, 92, COND);
+  ctx.font = `700 ${namePx}px ${COND}`;
+  ctx.fillText(tournament.name.toUpperCase(), 80, 130 + namePx * 0.92);
+
+  let y = 130 + namePx * 0.92 + 20;
+  if (tournament.course_name) {
+    ctx.fillStyle = "rgba(255,255,255,.55)";
+    ctx.font = `400 34px ${SANS}`;
+    ctx.fillText(tournament.course_name, 80, y + 34);
+    y += 52;
+  }
+
+  ctx.strokeStyle = "rgba(255,255,255,.12)";
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(80, y + 34); ctx.lineTo(W - 80, y + 34); ctx.stroke();
+
+  // podium rows
+  let top = y + 96;
+  const rowH = 250, gap = 26;
+
+  rows.slice(0, 3).forEach((r, i) => {
+    const m = PODIUM_METAL[i];
+    const ry = top + i * (rowH + gap);
+
+    ctx.fillStyle = i === 0 ? "rgba(227,178,60,.10)" : "rgba(255,255,255,.045)";
+    drawRoundRect(ctx, 80, ry, W - 160, rowH, 26);
+    ctx.fill();
+    ctx.strokeStyle = i === 0 ? "rgba(227,178,60,.5)" : "rgba(255,255,255,.10)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // medal chip
+    const cx = 80 + 92, cy = ry + rowH / 2;
+    ctx.beginPath(); ctx.arc(cx, cy, 58, 0, Math.PI * 2);
+    ctx.fillStyle = m.fill; ctx.fill();
+    ctx.lineWidth = 5; ctx.strokeStyle = m.edge; ctx.stroke();
+    ctx.fillStyle = m.ink;
+    ctx.font = `700 46px ${COND}`;
+    ctx.textAlign = "center";
+    ctx.fillText(`${r.tied ? "T" : ""}${r.place}`, cx, cy + 16);
+    ctx.textAlign = "left";
+
+    // team name + players
+    const textX = 80 + 190;
+    const scoreW = 250;
+    const availW = W - 160 - 190 - scoreW;
+    ctx.fillStyle = "#fff";
+    const tnPx = fitText(ctx, r.name, availW, 700, 62, COND);
+    ctx.font = `700 ${tnPx}px ${COND}`;
+    ctx.fillText(r.name.toUpperCase(), textX, cy + (r.players.length ? -6 : 18));
+
+    if (r.players.length) {
+      let who = r.players.join(" · ");
+      ctx.font = `400 28px ${SANS}`;
+      while (ctx.measureText(who).width > availW && who.length > 4) who = who.slice(0, -2);
+      if (who !== r.players.join(" · ")) who += "…";
+      ctx.fillStyle = "rgba(255,255,255,.5)";
+      ctx.fillText(who, textX, cy + 44);
+    }
+
+    // score — red under par, the same convention as the app
+    ctx.textAlign = "right";
+    ctx.fillStyle = r.toPar < 0 ? "#FF5A5F" : "#fff";
+    ctx.font = `700 96px ${COND}`;
+    ctx.fillText(r.thru ? toParLabel(r.toPar) : "—", W - 120, cy + 20);
+    ctx.fillStyle = "rgba(255,255,255,.45)";
+    ctx.font = `600 26px ${COND}`;
+    ctx.letterSpacing = "3px";
+    ctx.fillText(`${r.strokes} STROKES`, W - 120, cy + 62);
+    ctx.letterSpacing = "0px";
+    ctx.textAlign = "left";
+  });
+
+  // footer wordmark
+  const fy = H - 74;
+  ctx.strokeStyle = "rgba(255,255,255,.12)";
+  ctx.beginPath(); ctx.moveTo(80, fy - 46); ctx.lineTo(W - 80, fy - 46); ctx.stroke();
+  ctx.font = `700 40px ${COND}`;
+  ctx.fillStyle = "#4CCB78";
+  ctx.fillText("TEE", 80, fy);
+  const teeW = ctx.measureText("TEE").width;
+  ctx.fillStyle = "#fff";
+  ctx.fillText("BOARD", 80 + teeW, fy);
+
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,.45)";
+  ctx.font = `600 28px ${COND}`;
+  ctx.letterSpacing = "3px";
+  ctx.fillText(`${tournament.num_holes} HOLES · ${new Date().toLocaleDateString()}`.toUpperCase(), W - 80, fy - 4);
+  ctx.letterSpacing = "0px";
+  ctx.textAlign = "left";
+
+  return cv;
+}
+
+// Preview sheet with the rendered card, plus download / native share.
+function showPodiumSheet(tournament, rows) {
+  const canvas = renderPodiumCanvas(tournament, rows);
+  const fileName = `${tournament.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-top3.png`;
+
+  const wrap = document.createElement("div");
+  wrap.className = "sheet-backdrop";
+  wrap.innerHTML = `
+    <div class="sheet" role="dialog" aria-label="Top 3 result card">
+      <div class="flex items-center justify-between mb-3">
+        <span class="eyebrow">Top 3 result card</span>
+        <button class="btn-ghost" data-close>Close</button>
+      </div>
+      <div class="sheet-img"></div>
+      <div class="grid grid-cols-2 gap-2 mt-3">
+        <button class="btn-secondary text-sm" data-share>Share</button>
+        <button class="btn-primary text-sm" data-save>Save image</button>
+      </div>
+      <p class="text-xs muted-2 text-center mt-2">1080 × 1350 — sized for a phone screen or a story post.</p>
+    </div>`;
+  canvas.style.cssText = "width:100%;height:auto;display:block;border-radius:12px";
+  wrap.querySelector(".sheet-img").appendChild(canvas);
+  document.body.appendChild(wrap);
+
+  const close = () => wrap.remove();
+  wrap.addEventListener("click", (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector("[data-close]").addEventListener("click", close);
+
+  const toBlob = () => new Promise((res) => canvas.toBlob(res, "image/png"));
+
+  wrap.querySelector("[data-save]").addEventListener("click", async () => {
+    const blob = await toBlob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Image saved");
+  });
+
+  const shareBtn = wrap.querySelector("[data-share]");
+  shareBtn.addEventListener("click", async () => {
+    const blob = await toBlob();
+    const file = new File([blob], fileName, { type: "image/png" });
+    // navigator.share only accepts files on some browsers, so check first and
+    // fall back to a plain download rather than throwing at the user.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: tournament.name });
+      } catch { /* user dismissed the share sheet */ }
+    } else {
+      wrap.querySelector("[data-save]").click();
+    }
+  });
+}
+
 function toast(msg, isError) {
   let t = document.createElement("div");
   t.textContent = msg;
@@ -907,6 +1212,8 @@ async function viewAdmin(tournamentId) {
         </div>
       </div>
 
+      <button id="podium-btn" class="btn-green w-full mb-3 no-print">${icon("trophy", 17)} Top 3 result card</button>
+
       <div class="flex items-center gap-3 mt-6 mb-2.5">
         <h2 class="eyebrow">Teams (${(teams || []).length})</h2>
         <span class="flex-1 hairline"></span>
@@ -1090,6 +1397,31 @@ async function viewAdmin(tournamentId) {
     });
     document.getElementById("print-qr").addEventListener("click", () => {
       window.print();
+    });
+
+    document.getElementById("podium-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("podium-btn");
+      btn.disabled = true;
+      const label = btn.innerHTML;
+      btn.textContent = "Building…";
+      try {
+        // Canvas draws with whatever fonts are ready, so wait for the webfonts
+        // or the card comes out in a fallback face.
+        if (document.fonts && document.fonts.ready) await document.fonts.ready;
+        const { data: full } = await sb
+          .from("teams")
+          .select("id, name, signed_at, team_members(player_name), scores(hole_number, strokes)")
+          .eq("tournament_id", tournamentId);
+        const ranked = buildLeaderboard(tournament, full).filter((r) => r.thru > 0);
+        if (!ranked.length) {
+          toast("No scores in yet — nothing to put on a result card.", true);
+          return;
+        }
+        showPodiumSheet(tournament, ranked);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
     });
 
     if (isOwner) {
@@ -1801,12 +2133,6 @@ async function viewTeam(teamId) {
         ${!isSigned ? `<span class="eyebrow">${thru} of ${tournament.num_holes}</span>` : ""}
       </div>
 
-      ${isSigned ? `
-        <p class="text-xs muted-2 mb-3 flex items-center gap-1.5">
-          <span class="hole-mark hole-mark-sm birdie">3</span> birdie
-          <span class="hole-mark hole-mark-sm bogey ml-2">5</span> bogey
-        </p>` : ""}
-
       <div class="grid grid-cols-1 gap-2 mb-5">${holesHtml}</div>
 
       ${!isSigned ? `
@@ -1872,37 +2198,7 @@ async function viewLeaderboard(tournamentId) {
     ? `<span class="pill live"><span class="dot"></span>Live</span>`
     : `<span class="pill on-dark">Final</span>`;
 
-  const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
-
-  // Stroke index per hole (1 = hardest), used only to break ties once a team
-  // has finished every hole — a "scorecard playoff" countback. Falls back to
-  // hole order if the organizer hasn't set real handicaps for this course.
-  const handicap = tournament.handicap && tournament.handicap.length === tournament.num_holes
-    ? tournament.handicap
-    : Array.from({ length: tournament.num_holes }, (_, i) => i + 1);
-  const countbackOrder = Array.from({ length: tournament.num_holes }, (_, i) => i + 1)
-    .sort((a, b) => handicap[a - 1] - handicap[b - 1]);
-
-  function countbackKey(row) {
-    let cum = 0;
-    return countbackOrder.map((h) => (cum += row.scoreMap[h] ?? 0));
-  }
-
-  // Full ordering: unstarted teams last, then by score-to-par, then (once
-  // both teams have finished every hole) by countback on the hardest holes
-  // first. Returns 0 only when two teams are genuinely inseparable — that's
-  // when the leaderboard shows them tied with a "T".
-  function compareRows(a, b) {
-    if ((a.thru === 0) !== (b.thru === 0)) return a.thru === 0 ? 1 : -1;
-    if (a.toPar !== b.toPar) return a.toPar - b.toPar;
-    if (a.thru === tournament.num_holes && b.thru === tournament.num_holes) {
-      const ak = countbackKey(a), bk = countbackKey(b);
-      for (let i = 0; i < ak.length; i++) {
-        if (ak[i] !== bk[i]) return ak[i] - bk[i];
-      }
-    }
-    return b.thru - a.thru;
-  }
+  const par = tournamentPar(tournament);
 
   async function render() {
     const { data: teams } = await sb
@@ -1910,42 +2206,7 @@ async function viewLeaderboard(tournamentId) {
       .select("id, name, signed_at, team_members(player_name), scores(hole_number, strokes)")
       .eq("tournament_id", tournamentId);
 
-    const rows = (teams || []).map((t) => {
-      let strokes = 0, parSum = 0, thru = 0;
-      const scoreMap = {};
-      (t.scores || []).forEach((s) => {
-        strokes += s.strokes;
-        parSum += par[s.hole_number - 1] ?? 4;
-        scoreMap[s.hole_number] = s.strokes;
-        thru++;
-      });
-      return {
-        id: t.id,
-        name: t.name,
-        players: (t.team_members || []).map((m) => m.player_name),
-        strokes, thru,
-        scoreMap,
-        toPar: strokes - parSum,
-        signed: !!t.signed_at,
-      };
-    });
-
-    rows.sort(compareRows);
-
-    // Places skip after ties (1, 2, 2, 4 …). The countback above already
-    // resolves most ties into a real order; "T" only shows when two or more
-    // teams are still fully identical after it.
-    let place = 0;
-    rows.forEach((r, i) => {
-      const prev = rows[i - 1];
-      const same = prev && r.thru > 0 && prev.thru > 0 && compareRows(prev, r) === 0;
-      place = same ? place : i + 1;
-      r.place = place;
-    });
-    rows.forEach((r, i) => {
-      r.tied = r.thru > 0 && rows.some((o, j) => j !== i && o.place === r.place);
-    });
-
+    const rows = buildLeaderboard(tournament, teams);
     const isLive = tournament.status === "active";
 
     app.innerHTML = `
@@ -2095,12 +2356,7 @@ async function viewScorecard(teamId) {
         ${scorecardGridHtml(par, scoreMap, tournament.start_hole || 1, tournament.yardage, tournament.handicap)}
       </div>
 
-      <p class="text-xs muted-2 mb-5 flex items-center gap-1.5">
-        <span class="hole-mark hole-mark-sm birdie">3</span> birdie
-        <span class="hole-mark hole-mark-sm bogey ml-2">5</span> bogey
-      </p>
-
-      <a href="#/leaderboard/${tournament.id}" class="btn-secondary w-full">${icon("board", 17)} Back to leaderboard</a>
+      <a href="#/leaderboard/${tournament.id}" class="btn-secondary w-full mt-5">${icon("board", 17)} Back to leaderboard</a>
     `;
   }
 
