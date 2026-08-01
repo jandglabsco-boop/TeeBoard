@@ -1213,16 +1213,32 @@ async function viewResetPassword() {
     statusEl.textContent = "Saving…";
 
     const { error } = await sb.auth.updateUser({ password: pw });
-    btn.disabled = false;
     if (error) {
+      btn.disabled = false;
       return fail(/should be different/i.test(error.message)
         ? "That's already your current password — pick a different one."
         : error.message);
     }
+
+    // Changing a password is pointless as a security measure if whoever
+    // prompted it stays signed in elsewhere. Supabase does not reliably
+    // revoke other sessions on a password change, so do it explicitly.
+    // scope:"others" leaves this browser signed in and kills every other
+    // device, which then has to sign in again with the new password.
+    statusEl.textContent = "Signing out other devices…";
+    const { error: revokeError } = await sb.auth.signOut({ scope: "others" });
+    btn.disabled = false;
+    if (revokeError) {
+      // The password did change, so don't imply it failed — but don't claim
+      // other devices were kicked out when they may not have been.
+      toast("Password updated, but other devices may still be signed in", true);
+    } else {
+      toast("Password updated — other devices signed out");
+    }
+
     isPasswordRecovery = false;
     renderHeaderProfile();
     location.hash = "#/";
-    toast("Password updated — you're signed in");
   });
 }
 
