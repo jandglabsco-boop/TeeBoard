@@ -612,6 +612,8 @@ const routes = [
   { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/billing/, view: () => viewBilling() },
+  { re: /^#\/terms$/, view: () => viewLegal("terms") },
+  { re: /^#\/refunds$/, view: () => viewLegal("refunds") },
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
@@ -956,6 +958,109 @@ function renderPaywall(billing, context) {
     startCheckout(e.currentTarget, document.getElementById("billing-status")));
 }
 
+// ---------- legal pages ----------
+// Plain-language starting points, written to match how TeeBoard actually
+// behaves. NOT drafted by a lawyer — see README before taking real payments.
+
+const LEGAL_UPDATED = "1 August 2026";
+
+const LEGAL = {
+  terms: {
+    eyebrow: "Legal",
+    title: "Terms of Service",
+    body: `
+      <h2>Who we are</h2>
+      <p>TeeBoard ("we", "us") provides live scoring and leaderboards for golf scrambles and small tournaments at teeboardgolf.com. By creating an account or using the service you agree to these terms.</p>
+
+      <h2>Accounts</h2>
+      <p>Organizers need an account. You're responsible for keeping your password secure and for everything done under your account. Players don't need accounts and never pay — they join with a code.</p>
+
+      <h2>Free trial and subscription</h2>
+      <p>New organizer accounts get <b>30 days free</b>, starting the day the account is created. No payment details are required to start the trial.</p>
+      <p>After the trial, creating and managing tournaments requires an active subscription of <b>$30 USD per month</b>. The subscription renews automatically each month until cancelled. Prices are subject to change with at least 30 days' notice.</p>
+      <p>If your trial or subscription lapses, tournaments already running keep working — players can still enter scores and leaderboards stay live. You can still view and delete your own tournaments.</p>
+
+      <h2>Cancelling</h2>
+      <p>You can cancel at any time from Billing, which opens Stripe's billing portal. Cancellation takes effect at the end of the period you've already paid for; you keep access until then. See our <a href="#/refunds" class="link-underline">Refund Policy</a>.</p>
+
+      <h2>Payments</h2>
+      <p>Payments are processed by Stripe. We never see or store your card details. You're responsible for any taxes that apply to you beyond those we're required to collect.</p>
+
+      <h2>Acceptable use</h2>
+      <p>Don't use TeeBoard to break the law, to gamble where gambling is illegal, to upload other people's personal data without their knowledge, or to attack or overload the service. We may suspend accounts that do.</p>
+
+      <h2>Your data</h2>
+      <p>You keep ownership of the tournaments, rosters and scores you create. We store them so the service works. Deleting a tournament deletes its teams, players and scores permanently.</p>
+      <p>Anyone with a tournament's link or join code can view its leaderboard and enter scores for a team. That's how the product is designed to work — don't put anything confidential into team or player names.</p>
+
+      <h2>Availability, and the honest bit</h2>
+      <p>TeeBoard is a small product run by a small operation. We don't promise it will be available without interruption, and we don't guarantee it's free of bugs. It's provided "as is", without warranties of any kind.</p>
+      <p>To the extent the law allows, our total liability to you for any claim is limited to what you paid us in the 12 months before the claim. We're not liable for indirect or consequential losses — including, to be concrete, a scoring error or outage affecting the result of your event. <b>Don't rely on TeeBoard as the sole record for anything that matters financially.</b> Keep a paper card.</p>
+
+      <h2>Ending things</h2>
+      <p>You can stop using TeeBoard and delete your tournaments at any time. We may suspend or end an account that breaks these terms. If we discontinue the service, we'll give reasonable notice so you can export or record your data.</p>
+
+      <h2>Changes</h2>
+      <p>We may update these terms. Material changes will be announced in the app before they take effect.</p>
+
+      <h2>Contact</h2>
+      <p>Questions about these terms: <a href="mailto:jandglabsco@gmail.com" class="link-underline">jandglabsco@gmail.com</a>.</p>
+    `,
+  },
+  refunds: {
+    eyebrow: "Legal",
+    title: "Refund Policy",
+    body: `
+      <h2>The short version</h2>
+      <p>You get <b>30 days free</b> before paying anything, so you can decide whether TeeBoard works for your league before spending money. Because of that, we don't routinely refund months you've already used.</p>
+
+      <h2>Cancelling</h2>
+      <p>Cancel any time from Billing. You keep full access until the end of the period you've already paid for, and you won't be charged again. We don't charge a cancellation fee.</p>
+
+      <h2>When we will refund</h2>
+      <ul>
+        <li><b>Charged after cancelling.</b> If you were billed for a period after you cancelled, we'll refund it in full.</li>
+        <li><b>Duplicate charges.</b> Billed twice for the same month? We'll refund the duplicate.</li>
+        <li><b>Service badly broken.</b> If TeeBoard was substantially unusable for a stretch of a month you paid for, tell us and we'll refund or credit that month.</li>
+        <li><b>Accidental renewal.</b> If you meant to cancel and got charged within the last 14 days without using the service in that period, ask and we'll refund it.</li>
+      </ul>
+
+      <h2>When we generally won't</h2>
+      <ul>
+        <li>Months you used normally and then changed your mind about.</li>
+        <li>Partial months — we don't pro-rate mid-period cancellations.</li>
+        <li>Your league's season ending, if you forgot to cancel beforehand.</li>
+      </ul>
+      <p>That said, if your situation feels unfair, ask. We'd rather sort it out than argue over $30.</p>
+
+      <h2>How to request one</h2>
+      <p>Email <a href="mailto:jandglabsco@gmail.com" class="link-underline">jandglabsco@gmail.com</a> from the address on the account, saying which charge you mean and why. We aim to reply within a few days. Approved refunds go back to the original card via Stripe and typically appear within 5–10 business days.</p>
+
+      <h2>Chargebacks</h2>
+      <p>Please contact us before disputing a charge with your bank — it's faster and we can usually fix it directly.</p>
+    `,
+  },
+};
+
+function viewLegal(which) {
+  const doc = LEGAL[which];
+  if (!doc) return viewHome();
+  app.innerHTML = `
+    <div class="mb-4">
+      <div class="eyebrow mb-1">${doc.eyebrow}</div>
+      <h1 class="text-2xl">${doc.title}</h1>
+      <p class="text-sm muted mt-1">Last updated ${LEGAL_UPDATED}</p>
+    </div>
+    <div class="card p-5 legal-doc">${doc.body}</div>
+    <div class="flex gap-2 mt-3">
+      <a href="#/${which === "terms" ? "refunds" : "terms"}" class="btn-secondary flex-1 text-sm">
+        ${which === "terms" ? "Refund Policy" : "Terms of Service"}
+      </a>
+      <a href="#/" class="btn-secondary flex-1 text-sm">Back</a>
+    </div>`;
+  window.scrollTo(0, 0);
+}
+
 // #/billing — subscribe, or manage an existing subscription.
 async function viewBilling() {
   app.innerHTML = loadingHtml();
@@ -1214,16 +1319,31 @@ function renderAuthGate() {
     app.innerHTML = `
       <div class="mb-4">
         <div class="eyebrow mb-1">Organizer</div>
-        <h1 class="text-2xl">Create a tournament</h1>
+        <h1 class="text-2xl">${mode === "signup" ? "Start your 30-day free trial" : "Welcome back"}</h1>
       </div>
 
-      <div class="card p-3 mb-3 flex items-start gap-3" style="background:var(--grass-100);border-color:var(--grass-200)">
-        <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("lock", 18)}</span>
-        <p class="text-sm" style="color:var(--grass-700)">
-          Organizers need a free account so only you can manage what you create.
-          <b>Players never sign up</b> — they just use the join code.
-        </p>
-      </div>
+      ${mode === "signup" ? `
+        <section class="panel-dark px-5 pt-5 pb-5 mb-3">
+          <div class="flex items-baseline gap-2">
+            <span class="num-display" style="font-size:2.4rem;color:var(--grass-400)">30</span>
+            <span class="eyebrow on-dark">days free</span>
+          </div>
+          <p class="text-sm mt-2" style="color:rgba(255,255,255,.62)">
+            Then $30/month. No card needed to start, and you can cancel any time.
+          </p>
+          <ul class="mt-4 pt-4 flex flex-col gap-1.5" style="border-top:1px solid rgba(255,255,255,.09)">
+            <li class="text-sm flex items-center gap-2" style="color:rgba(255,255,255,.75)">
+              <span style="color:var(--grass-400)">${icon("check", 15)}</span> Unlimited tournaments and players
+            </li>
+            <li class="text-sm flex items-center gap-2" style="color:rgba(255,255,255,.75)">
+              <span style="color:var(--grass-400)">${icon("check", 15)}</span> Live leaderboards on every phone
+            </li>
+            <li class="text-sm flex items-center gap-2" style="color:rgba(255,255,255,.75)">
+              <span style="color:var(--grass-400)">${icon("check", 15)}</span> Players never pay or sign up
+            </li>
+          </ul>
+        </section>
+      ` : ""}
 
       <div class="card p-5">
         <div class="flex gap-2 mb-5 p-1 rounded-xl" style="background:var(--paper)">
@@ -1258,9 +1378,17 @@ function renderAuthGate() {
           <input id="auth-password2" type="password" autocomplete="new-password" placeholder="Type it again" class="mb-4" />
         ` : ""}
 
-        <button id="auth-submit" class="btn-primary w-full" ${mode === "signup" && blockedFor ? "disabled" : ""}>
-          ${mode === "signup" ? "Create account" : "Sign in"}
+        <button id="auth-submit" class="${mode === "signup" ? "btn-green" : "btn-primary"} w-full" ${mode === "signup" && blockedFor ? "disabled" : ""}>
+          ${mode === "signup" ? "Start free trial" : "Sign in"}
         </button>
+
+        ${mode === "signup" ? `
+          <p class="text-xs muted-2 text-center mt-3 leading-relaxed">
+            By creating an account you agree to our
+            <a href="#/terms" class="link-underline">Terms</a> and
+            <a href="#/refunds" class="link-underline">Refund Policy</a>.
+          </p>
+        ` : ""}
 
         ${mode === "signin" ? `
           <div class="text-center mt-3">

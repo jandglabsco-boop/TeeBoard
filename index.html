@@ -516,6 +516,22 @@
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes sheet-up { from { opacity: 0; transform: translateY(14px) scale(.98); } to { opacity: 1; transform: none; } }
 
+  /* ---------- legal documents ---------- */
+
+  .legal-doc h2 {
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase;
+    font-size: .92rem;
+    letter-spacing: .1em;
+    color: var(--ink-2);
+    margin: 1.5rem 0 .5rem;
+  }
+  .legal-doc h2:first-child { margin-top: 0; }
+  .legal-doc p { font-size: .9rem; line-height: 1.6; color: var(--ink-2); margin-bottom: .7rem; }
+  .legal-doc b { color: var(--ink); }
+  .legal-doc ul { margin: 0 0 .7rem 1.1rem; }
+  .legal-doc li { font-size: .9rem; line-height: 1.6; color: var(--ink-2); list-style: disc; margin-bottom: .35rem; }
+
   /* inline form status lines */
   .status-err  { color: var(--under); font-weight: 600; }
   .status-ok   { color: var(--grass-700); font-weight: 600; }
@@ -561,12 +577,14 @@
   <main id="app" class="max-w-lg mx-auto px-4 pt-4 pb-14"></main>
 
   <footer class="max-w-lg mx-auto px-4 pb-8">
-    <div class="hairline pt-4 text-center">
+    <div class="hairline pt-4 flex items-center justify-center gap-4">
+      <a href="#/terms" class="eyebrow">Terms</a>
       <span class="eyebrow">TeeBoard</span>
+      <a href="#/refunds" class="eyebrow">Refunds</a>
     </div>
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260801a"></script>
+  <script src="app.js?v=20260801b"></script>
 </body>
 </html>

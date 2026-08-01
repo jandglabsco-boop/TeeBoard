@@ -112,3 +112,53 @@ variable there restyles the whole app.
 - Season-long standings across multiple Thursday nights
 - Photos/highlights per hole, side games (closest to pin, skins)
 - Password reset flow, and optional player accounts + push notifications ("you're up!" or "you just took the lead")
+
+## Billing
+
+Organizers get 30 days free from signup, then $30/month. Players never pay and
+never sign up.
+
+The paywall is enforced by RLS in Postgres (`has_teeboard_access()` on the
+`tournaments` INSERT/UPDATE policies), not in the front end. That's deliberate:
+the app is static files served with a public anon key, so a check that lives
+only in JavaScript can be removed with devtools. `organizer_billing` has no
+client write policy — only the `stripe-webhook` Edge Function, running as
+service role, may change subscription state.
+
+Three Edge Functions back it: `create-checkout`, `stripe-webhook` and
+`customer-portal`. They need these secrets set in
+**Supabase → Edge Functions → Secrets**:
+
+| Secret | Where it comes from |
+|---|---|
+| `STRIPE_SECRET_KEY` | Stripe → Developers → API keys |
+| `STRIPE_PRICE_ID` | The $30/month recurring price |
+| `STRIPE_WEBHOOK_SECRET` | Shown when you create the webhook endpoint |
+
+Webhook endpoint: `https://<project>.supabase.co/functions/v1/stripe-webhook`,
+subscribed to `checkout.session.completed` and `customer.subscription.created`
+/ `.updated` / `.deleted`.
+
+To comp an account so it never pays:
+
+```sql
+update organizer_billing b set is_exempt = true
+  from auth.users u where u.id = b.user_id and u.email = 'you@example.com';
+```
+
+### Before taking real money
+
+- **`/#/terms` and `/#/refunds` are drafts, not legal advice.** They were
+  written to describe how TeeBoard actually behaves, which is the useful half
+  of the job, but they haven't been reviewed by a lawyer and they aren't
+  tailored to your jurisdiction or business structure. Get them looked at
+  before real cards are charged.
+- **Sales tax is not handled.** Enable Stripe Tax and register where you have
+  obligations. Nothing in this codebase calculates or remits tax.
+- **`past_due` currently means locked out** with no grace period — a card that
+  expires mid-season locks that organizer out immediately. Change the status
+  list in `has_teeboard_access()` if you want to be softer.
+- **Roster edits aren't hard-gated.** Adding players and creating teams use the
+  *public* policies that players themselves need, so those are hidden in the UI
+  but not blocked at the database. Tournament creation and settings are
+  properly gated.
