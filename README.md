@@ -21,7 +21,11 @@ Players: access is by knowing the code, same as a real scorecard. Organizers: re
 3. In the left sidebar, open **SQL Editor** → **New query**, paste the contents of `schema.sql` from this folder, and run it. This creates the tables, turns on live updates, and sets up organizer accounts (email/password sign-up is on by default in every Supabase project — nothing extra to enable).
    - **Already set up TeeBoard before this file had the migration block at the bottom?** Just run that bottom block again (it's safe to re-run) to add accounts to your existing project.
 4. In the left sidebar, open **Project Settings → API**. Copy the **Project URL** and the **anon public** key.
-5. *(Optional, recommended for a casual league)* Under **Authentication → Sign In / Providers → Email**, turn off **"Confirm email"** so organizers can sign up and start creating tournaments immediately, without waiting on a confirmation email. Leave it on if you'd rather have that extra check.
+5. **Set your URLs, or confirmation emails will appear broken.** Under **Authentication → URL Configuration**, set **Site URL** to wherever the app is hosted (e.g. `https://yourname.github.io/TeeBoard/`) and add that same URL under **Redirect URLs**. Add `http://localhost:8000/` too if you test locally.
+
+   The app asks Supabase to send people back to its own address after they click the confirmation link. If that address isn't on the allow-list, Supabase silently falls back to the Site URL — which defaults to `http://localhost:3000` on a new project. That's the classic "the confirmation email doesn't work" symptom: the link verifies fine, then dumps the person on a dead page.
+
+6. *(Optional)* Under **Authentication → Sign In / Providers → Email**, turn off **"Confirm email"** if you'd rather organizers start immediately without the email round trip. Leaving it on is fine — the app handles the callback, shows a "check your email" screen and offers a resend.
 
 ## 2. Configure the app
 

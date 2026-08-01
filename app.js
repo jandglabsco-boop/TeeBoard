@@ -1,5 +1,10 @@
 // TeeBoard app logic. Plain JS, no build step. Talks directly to Supabase.
 
+// Snapshot the URL before the Supabase client exists: with detectSessionInUrl
+// on (the default) it consumes and clears #access_token= during startup, so by
+// the time our own callback handler runs the evidence is gone.
+const ENTRY_URL = { hash: location.hash, search: location.search };
+
 const CFG = window.TEEBOARD_CONFIG || {};
 const CONFIGURED = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR_SUPABASE_URL_HERE");
 const sb = CONFIGURED ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
@@ -544,15 +549,24 @@ async function renderHeaderProfile() {
     el.innerHTML = "";
     return;
   }
-  const initial = escapeHtml(user.email.charAt(0).toUpperCase());
+  const meta = user.user_metadata || {};
+  const fullName = [meta.first_name, meta.last_name].filter(Boolean).join(" ") || meta.full_name || "";
+  // Initials from the name when we have one, falling back to the email for
+  // accounts created before sign-up collected names.
+  const initial = escapeHtml(
+    fullName
+      ? fullName.split(/\s+/).slice(0, 2).map((p) => p.charAt(0)).join("").toUpperCase()
+      : user.email.charAt(0).toUpperCase()
+  );
   el.innerHTML = `
     <div class="relative">
       <button id="profile-btn" aria-label="Account menu"
-        class="w-8 h-8 rounded-lg text-white font-bold text-sm flex items-center justify-center"
-        style="background:var(--grass-600);border:1px solid rgba(255,255,255,.15);">${initial}</button>
+        class="h-8 rounded-lg text-white font-bold text-sm flex items-center justify-center px-2"
+        style="min-width:2rem;background:var(--grass-600);border:1px solid rgba(255,255,255,.15);">${initial}</button>
       <div id="profile-menu" class="hidden absolute right-0 mt-2 w-60 card p-3 z-40">
         <div class="eyebrow mb-1">Signed in as</div>
-        <div class="text-sm font-semibold mb-3 break-all">${escapeHtml(user.email)}</div>
+        ${fullName ? `<div class="text-sm font-bold">${escapeHtml(fullName)}</div>` : ""}
+        <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -605,7 +619,7 @@ function route() {
 }
 
 window.addEventListener("hashchange", route);
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
   if (!CONFIGURED) {
     app.innerHTML = `
       <div class="card p-6 mt-4">
@@ -619,8 +633,62 @@ window.addEventListener("DOMContentLoaded", () => {
       </div>`;
     return;
   }
+  if (await handleAuthCallback()) return;
   route();
 });
+
+// Where Supabase should send someone back to after they click the link in a
+// confirmation email. Must also be listed under Authentication → URL
+// Configuration → Redirect URLs in the Supabase dashboard, or Supabase falls
+// back to the project's Site URL and the link appears to "not work".
+function authRedirectTo() {
+  return location.origin + location.pathname;
+}
+
+// Finishes the email-confirmation round trip. Supabase's /verify endpoint
+// bounces back here with either ?code= (PKCE) or #access_token= (implicit),
+// which is meaningless to the hash router — without this the link lands on a
+// page that silently ignores it and the account stays unconfirmed.
+async function handleAuthCallback() {
+  const rawHash = ENTRY_URL.hash.replace(/^#/, "");
+  const hashParams = new URLSearchParams(rawHash.includes("=") ? rawHash : "");
+  const qs = new URLSearchParams(ENTRY_URL.search);
+
+  const errDesc = hashParams.get("error_description") || qs.get("error_description");
+  const code = qs.get("code");
+  const hasToken = hashParams.has("access_token");
+  if (!errDesc && !code && !hasToken) return false;
+
+  const base = location.origin + location.pathname;
+
+  if (errDesc) {
+    // Expired or already-used links land here rather than dumping raw
+    // querystring at someone.
+    history.replaceState(null, "", base + "#/create");
+    route();
+    toast(decodeURIComponent(errDesc.replace(/\+/g, " ")), true);
+    return true;
+  }
+
+  if (code) {
+    const { error } = await sb.auth.exchangeCodeForSession(code);
+    if (error) {
+      history.replaceState(null, "", base + "#/create");
+      route();
+      toast("That link didn't work: " + error.message, true);
+      return true;
+    }
+  } else {
+    // Implicit flow — supabase-js parses the hash itself on startup; this just
+    // waits for it to have finished before we redraw.
+    await sb.auth.getSession();
+  }
+
+  history.replaceState(null, "", base + "#/");
+  route();
+  toast("Email confirmed — you're signed in");
+  return true;
+}
 
 // ---------- HOME ----------
 
@@ -736,13 +804,111 @@ async function viewCreate() {
   renderCreateForm(user);
 }
 
+// ---------- sign-up throttling ----------
+// Client-side guard only. Supabase enforces the real limits server-side; this
+// exists so someone hammering the button gets a clear countdown instead of a
+// wall of "email rate limit exceeded" errors, and so we stop firing requests
+// we already know will be rejected.
+const SIGNUP_MAX_ATTEMPTS = 3;
+const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+function authAttempts() {
+  const cutoff = Date.now() - SIGNUP_WINDOW_MS;
+  return load("bb_auth_attempts", []).filter((t) => t > cutoff);
+}
+function recordAuthAttempt() {
+  const list = authAttempts();
+  list.push(Date.now());
+  store("bb_auth_attempts", list);
+}
+// Milliseconds until another sign-up is allowed, or 0 if one is allowed now.
+function signupBlockedFor() {
+  const list = authAttempts();
+  if (list.length < SIGNUP_MAX_ATTEMPTS) return 0;
+  return Math.max(0, list[0] + SIGNUP_WINDOW_MS - Date.now());
+}
+function humanDuration(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return `${s} second${s === 1 ? "" : "s"}`;
+  const m = Math.ceil(s / 60);
+  return `${m} minute${m === 1 ? "" : "s"}`;
+}
+
 function renderAuthGate() {
   // Default to Sign Up: most people hitting this gate are brand new
   // organizers who don't have an account yet. Returning organizers can
   // still tap "Sign In".
   let mode = "signup";
+  let pendingEmail = null;   // set once a confirmation email has gone out
+  let resendAt = 0;          // timestamp the resend button unlocks
+
+  function drawPending() {
+    app.innerHTML = `
+      <div class="mb-4">
+        <div class="eyebrow mb-1">Almost there</div>
+        <h1 class="text-2xl">Check your email</h1>
+      </div>
+      <div class="card p-6 text-center">
+        <div class="mx-auto mb-4 flex items-center justify-center rounded-2xl"
+             style="width:3.5rem;height:3.5rem;background:var(--grass-100);color:var(--grass-700)">${icon("check", 26)}</div>
+        <p class="text-sm muted mb-1">We sent a confirmation link to</p>
+        <p class="font-bold mb-4 break-all">${escapeHtml(pendingEmail)}</p>
+        <p class="text-xs muted-2 mb-5">Open it on this device if you can — the link signs you straight in. It expires in 24 hours.</p>
+        <button id="resend-btn" class="btn-secondary w-full mb-2">Resend email</button>
+        <button id="back-to-auth" class="btn-ghost">Use a different email</button>
+        <div id="auth-status" class="text-xs mt-3"></div>
+      </div>
+    `;
+
+    const resendBtn = document.getElementById("resend-btn");
+    const tick = () => {
+      const left = resendAt - Date.now();
+      if (left > 0) {
+        resendBtn.disabled = true;
+        resendBtn.textContent = `Resend in ${Math.ceil(left / 1000)}s`;
+        setTimeout(tick, 500);
+      } else {
+        resendBtn.disabled = false;
+        resendBtn.textContent = "Resend email";
+      }
+    };
+    tick();
+
+    resendBtn.addEventListener("click", async () => {
+      const statusEl = document.getElementById("auth-status");
+      resendBtn.disabled = true;
+      statusEl.className = "text-xs mt-3 status-info";
+      statusEl.textContent = "Sending…";
+      const { error } = await sb.auth.resend({
+        type: "signup",
+        email: pendingEmail,
+        options: { emailRedirectTo: authRedirectTo() },
+      });
+      if (error) {
+        statusEl.className = "text-xs mt-3 status-err";
+        statusEl.textContent = error.message;
+        resendBtn.disabled = false;
+        return;
+      }
+      resendAt = Date.now() + RESEND_COOLDOWN_MS;
+      statusEl.className = "text-xs mt-3 status-ok";
+      statusEl.textContent = "Sent — check your inbox and spam folder.";
+      tick();
+    });
+
+    document.getElementById("back-to-auth").addEventListener("click", () => {
+      pendingEmail = null;
+      mode = "signup";
+      draw();
+    });
+  }
 
   function draw() {
+    if (pendingEmail) return drawPending();
+
+    const blockedFor = signupBlockedFor();
+
     app.innerHTML = `
       <div class="mb-4">
         <div class="eyebrow mb-1">Organizer</div>
@@ -764,60 +930,118 @@ function renderAuthGate() {
           <button id="tab-signin" class="flex-1 py-2 rounded-lg text-sm font-bold transition"
             style="${mode === "signin" ? "background:var(--surface);box-shadow:0 1px 3px rgba(8,17,12,.12)" : "color:var(--ink-2)"}">Sign in</button>
         </div>
+
+        ${mode === "signup" ? `
+          <div class="grid grid-cols-2 gap-2 mb-4">
+            <div>
+              <label class="field-label">First name</label>
+              <input id="auth-first" autocomplete="given-name" placeholder="Gabe" />
+            </div>
+            <div>
+              <label class="field-label">Last name</label>
+              <input id="auth-last" autocomplete="family-name" placeholder="Herbst" />
+            </div>
+          </div>
+        ` : ""}
+
         <label class="field-label">Email</label>
-        <input id="auth-email" type="email" placeholder="you@email.com" class="mb-4" />
+        <input id="auth-email" type="email" autocomplete="email" placeholder="you@email.com" class="mb-4" />
+
         <label class="field-label">Password</label>
-        <input id="auth-password" type="password" placeholder="At least 6 characters" class="mb-4" />
-        <button id="auth-submit" class="btn-primary w-full">${mode === "signup" ? "Create account" : "Sign in"}</button>
-        <div id="auth-status" class="text-xs mt-3"></div>
+        <input id="auth-password" type="password" autocomplete="${mode === "signup" ? "new-password" : "current-password"}"
+               placeholder="At least 6 characters" class="mb-4" />
+
+        ${mode === "signup" ? `
+          <label class="field-label">Confirm password</label>
+          <input id="auth-password2" type="password" autocomplete="new-password" placeholder="Type it again" class="mb-4" />
+        ` : ""}
+
+        <button id="auth-submit" class="btn-primary w-full" ${mode === "signup" && blockedFor ? "disabled" : ""}>
+          ${mode === "signup" ? "Create account" : "Sign in"}
+        </button>
+        <div id="auth-status" class="text-xs mt-3">${
+          mode === "signup" && blockedFor
+            ? `<span class="status-err">Too many sign-up attempts. Try again in ${humanDuration(blockedFor)}.</span>`
+            : ""
+        }</div>
       </div>
     `;
 
     document.getElementById("tab-signin").addEventListener("click", () => { mode = "signin"; draw(); });
     document.getElementById("tab-signup").addEventListener("click", () => { mode = "signup"; draw(); });
 
-    document.getElementById("auth-submit").addEventListener("click", async () => {
+    const submit = document.getElementById("auth-submit");
+    app.querySelectorAll("input").forEach((inp) => {
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") submit.click(); });
+    });
+
+    submit.addEventListener("click", async () => {
+      const statusEl = document.getElementById("auth-status");
+      const fail = (msg) => {
+        statusEl.className = "text-xs mt-3 status-err";
+        statusEl.textContent = msg;
+      };
+
       const email = document.getElementById("auth-email").value.trim();
       const password = document.getElementById("auth-password").value;
-      const statusEl = document.getElementById("auth-status");
-      const btn = document.getElementById("auth-submit");
 
-      if (!email || !password) {
-        statusEl.className = "text-xs mt-3 status-err";
-        statusEl.textContent = "Enter an email and password.";
+      if (mode === "signup") {
+        const waitMs = signupBlockedFor();
+        if (waitMs) return fail(`Too many sign-up attempts. Try again in ${humanDuration(waitMs)}.`);
+
+        const first = document.getElementById("auth-first").value.trim();
+        const last = document.getElementById("auth-last").value.trim();
+        const password2 = document.getElementById("auth-password2").value;
+
+        if (!first || !last) return fail("Enter your first and last name.");
+        if (!email) return fail("Enter your email address.");
+        if (password.length < 6) return fail("Password needs to be at least 6 characters.");
+        if (password !== password2) return fail("Those passwords don't match.");
+
+        submit.disabled = true;
+        statusEl.className = "text-xs mt-3 status-info";
+        statusEl.textContent = "Creating account…";
+
+        recordAuthAttempt();
+        const { data, error } = await sb.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: authRedirectTo(),
+            data: { first_name: first, last_name: last, full_name: `${first} ${last}` },
+          },
+        });
+        submit.disabled = false;
+
+        if (error) {
+          return fail(/rate limit/i.test(error.message)
+            ? "Too many emails sent to that address just now — give it a few minutes."
+            : error.message);
+        }
+        // A session here means confirmation is switched off; otherwise they
+        // need to click the link before they can do anything.
+        if (data.session) { renderHeaderProfile(); return viewCreate(); }
+        pendingEmail = email;
+        resendAt = Date.now() + RESEND_COOLDOWN_MS;
+        drawPending();
         return;
       }
 
-      btn.disabled = true;
+      if (!email || !password) return fail("Enter your email and password.");
+      submit.disabled = true;
       statusEl.className = "text-xs mt-3 status-info";
-      statusEl.textContent = mode === "signup" ? "Creating account…" : "Signing in…";
-
-      if (mode === "signup") {
-        const { data, error } = await sb.auth.signUp({ email, password });
-        btn.disabled = false;
-        if (error) {
-          statusEl.className = "text-xs mt-3 status-err";
-          statusEl.textContent = error.message;
-          return;
-        }
-        if (data.session) { renderHeaderProfile(); return viewCreate(); }
-        // Project has "confirm email" turned on — no session until they click the email link.
-        mode = "signin";
-        draw();
-        const s = document.getElementById("auth-status");
-        s.className = "text-xs mt-3 status-ok";
-        s.textContent = "Account created — check your email to confirm it, then sign in here.";
-      } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        btn.disabled = false;
-        if (error) {
-          statusEl.className = "text-xs mt-3 status-err";
-          statusEl.textContent = error.message;
-          return;
-        }
-        renderHeaderProfile();
-        viewCreate();
+      statusEl.textContent = "Signing in…";
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      submit.disabled = false;
+      if (error) {
+        // Supabase reports an unconfirmed account as a generic failure, which
+        // reads as "wrong password" — say what's actually wrong instead.
+        return fail(/email not confirmed/i.test(error.message)
+          ? "That email hasn't been confirmed yet — check your inbox for the link."
+          : error.message);
       }
+      renderHeaderProfile();
+      viewCreate();
     });
   }
 
