@@ -511,16 +511,13 @@ function saveMyTeam(tournamentId, info) {
   t[tournamentId] = info;
   store("bb_my_teams", t);
 }
-// track tournaments I created (admin quick access)
-function myTournaments() { return load("bb_my_tournaments", []); }
-function saveMyTournament(t) {
-  const list = myTournaments().filter((x) => x.id !== t.id);
-  list.unshift(t);
-  store("bb_my_tournaments", list.slice(0, 10));
-}
-function removeMyTournament(id) {
-  store("bb_my_tournaments", myTournaments().filter((x) => x.id !== id));
-}
+// "Tournaments I created" is derived solely from the database, filtered by
+// created_by = the signed-in user. It used to be backed by a localStorage list
+// that every admin-page visit appended to, which meant any tournament ever
+// opened on a device showed up as yours — including other people's, and ones
+// belonging to a different account on a shared phone.
+// One-time cleanup of that stale list so it stops surfacing anywhere.
+try { localStorage.removeItem("bb_my_tournaments"); } catch { /* private mode */ }
 
 let realtimeChannel = null;
 function clearRealtime() {
@@ -699,8 +696,10 @@ async function viewHome() {
   const teams = myTeams();
   const teamEntries = Object.entries(teams);
 
+  // Only ever what this account actually created. Nothing device-local feeds
+  // this list, so signing in on someone else's phone shows you your own
+  // tournaments and nothing of theirs.
   let owned = [];
-  let legacy = [];
   if (user) {
     const { data } = await sb
       .from("tournaments")
@@ -708,10 +707,6 @@ async function viewHome() {
       .eq("created_by", user.id)
       .order("created_at", { ascending: false });
     owned = data || [];
-    // tournaments created on this browser before accounts existed (created_by is null
-    // for those). Only surfaced while signed in — otherwise a signed-out visitor on a
-    // browser that once created a tournament would still see a management list.
-    legacy = myTournaments().filter((t) => !owned.some((o) => o.id === t.id));
   }
 
   const listRow = (href, title, meta, action) => `
@@ -768,7 +763,7 @@ async function viewHome() {
       </div>
     ` : ""}
 
-    ${(owned.length || legacy.length) ? `
+    ${owned.length ? `
       <div class="flex items-center gap-3 mt-7 mb-2.5">
         <h2 class="eyebrow">Tournaments I created</h2>
         <div class="flex-1 hairline"></div>
@@ -776,9 +771,6 @@ async function viewHome() {
       <div class="grid grid-cols-1 gap-2">
         ${owned.map((t) => listRow(
           `#/admin/${t.id}`, escapeHtml(t.name), `Code ${escapeHtml(t.join_code)}`, "Manage",
-        )).join("")}
-        ${legacy.map((t) => listRow(
-          `#/admin/${t.id}`, escapeHtml(t.name), `Code ${escapeHtml(t.code)}`, "Manage",
         )).join("")}
       </div>
     ` : ""}
@@ -1349,7 +1341,6 @@ function renderCreateForm(user) {
       btn.textContent = "Create & get code";
       return;
     }
-    saveMyTournament({ id: tournament.id, name: tournament.name, code: tournament.join_code });
     location.hash = `#/admin/${tournament.id}`;
   });
 }
@@ -1367,11 +1358,11 @@ async function viewAdmin(tournamentId) {
     app.innerHTML = notFoundHtml("Tournament");
     return;
   }
-  // Tournaments created before accounts existed have no owner — anyone with the
-  // admin link can still manage those, same as before. Newer ones are owner-only
-  // (also enforced by RLS on the database side).
-  const isOwner = !tournament.created_by || (user && tournament.created_by === user.id);
-  saveMyTournament({ id: tournament.id, name: tournament.name, code: tournament.join_code });
+  // Strictly the account that created it. This used to also return true when
+  // created_by was null, which let anyone holding the link edit or delete the
+  // pre-accounts tournaments; those have since been assigned real owners.
+  // Mirrored by RLS, so a forged client can't get past it either.
+  const isOwner = !!user && tournament.created_by === user.id;
 
   // Which teams currently have their "manage" panel open — kept outside
   // render() so it survives re-renders (e.g. after adding another player,
@@ -1665,7 +1656,6 @@ async function viewAdmin(tournamentId) {
           btn.textContent = "Permanently delete";
           return;
         }
-        removeMyTournament(tournament.id);
         toast("Tournament deleted");
         location.hash = "#/";
       });

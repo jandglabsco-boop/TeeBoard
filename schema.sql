@@ -114,8 +114,9 @@ create policy "only owner can update their tournament" on tournaments
   using (auth.uid() = created_by);
 
 -- Note: any tournaments created before this migration have created_by = null.
--- TeeBoard's app code treats those as manageable by anyone with the admin
--- link (same as before), so nothing breaks for existing tournaments.
+-- The ownership lockdown at the bottom of this file assigns them a real owner
+-- and makes the column NOT NULL — read that before running this on an
+-- existing project.
 
 -- Lets organizers remove a player from the admin "Edit team" panel. Safe to
 -- re-run.
@@ -130,13 +131,13 @@ alter table teams add column if not exists signed_by text;
 
 -- Lets an organizer permanently delete a tournament (and, via the existing
 -- "on delete cascade" foreign keys, all of its teams/players/scores) from
--- the admin panel's Danger Zone. Tournaments created before organizer
--- accounts existed (created_by is null) stay manageable by anyone with the
--- admin link, same as the update policy's spirit. Safe to re-run.
+-- the admin panel's Danger Zone. Strictly the owner — see the ownership
+-- lockdown below for why the earlier "created_by is null" allowance was a
+-- hole rather than a convenience. Safe to re-run.
 drop policy if exists "only owner can delete their tournament" on tournaments;
 create policy "only owner can delete their tournament" on tournaments
   for delete
-  using (created_by is null or auth.uid() = created_by);
+  using (auth.uid() = created_by);
 
 -- Real course hole numbers + tiebreaks.
 --   start_hole: a 9-hole round played on the back nine is holes 10-18 on the
@@ -158,3 +159,25 @@ alter table tournaments add column if not exists handicap jsonb;
 alter table tournaments add column if not exists yardage jsonb;
 alter table tournaments add column if not exists tee_name text;
 alter table tournaments add column if not exists course_id text;
+
+-- Ownership lockdown.
+--
+-- "created_by is null" used to be treated as "anyone may manage this", both in
+-- the app and in the delete policy. That was meant as a kindness to
+-- tournaments created before organizer accounts existed, but it means anyone
+-- holding the admin link — which is just a URL — could rename or permanently
+-- delete those tournaments, along with every team and score in them.
+--
+-- Separately, the home screen's "Tournaments I created" list used to be fed
+-- partly from browser localStorage, which every admin-page visit appended to.
+-- Signing in on a shared device therefore showed tournaments belonging to
+-- other accounts. That list now comes only from this column.
+--
+-- Assign every ownerless tournament to a real account before running the
+-- NOT NULL below, or it will fail. Replace the email with whoever should own
+-- the pre-accounts tournaments on your project.
+update tournaments t
+   set created_by = (select id from auth.users where email = 'you@example.com')
+ where t.created_by is null;
+
+alter table tournaments alter column created_by set not null;
