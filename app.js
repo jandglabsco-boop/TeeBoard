@@ -576,6 +576,7 @@ async function renderHeaderProfile() {
         <div class="eyebrow mb-1">Signed in as</div>
         ${fullName ? `<div class="text-sm font-bold">${escapeHtml(fullName)}</div>` : ""}
         <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
+        <a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -588,6 +589,7 @@ async function renderHeaderProfile() {
   });
   document.addEventListener("click", () => menu.classList.add("hidden"), { once: true });
   document.getElementById("profile-signout").addEventListener("click", async () => {
+    billingCache = null;
     await sb.auth.signOut();
     if (location.hash === "#/" || location.hash === "") {
       // hashchange won't fire since the hash isn't actually changing, so
@@ -609,6 +611,7 @@ const routes = [
   // box with that string and auto-fired a doomed lookup on arrival.
   { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/reset$/, view: () => viewResetPassword() },
+  { re: /^#\/billing/, view: () => viewBilling() },
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
@@ -722,6 +725,7 @@ async function viewHome() {
   // this list, so signing in on someone else's phone shows you your own
   // tournaments and nothing of theirs.
   let owned = [];
+  let billing = null;
   if (user) {
     const { data } = await sb
       .from("tournaments")
@@ -729,6 +733,7 @@ async function viewHome() {
       .eq("created_by", user.id)
       .order("created_at", { ascending: false });
     owned = data || [];
+    billing = await getBilling();
   }
 
   const listRow = (href, title, meta, action) => `
@@ -741,6 +746,7 @@ async function viewHome() {
     </a>`;
 
   app.innerHTML = `
+    ${trialBannerHtml(billing)}
     <section class="panel-dark px-5 pt-6 pb-6 mb-2.5">
       <div class="eyebrow on-dark mb-3">Live scramble scoring</div>
       <h1 class="wordmark on-dark" style="font-size:3.2rem">
@@ -815,7 +821,211 @@ async function viewCreate() {
   app.innerHTML = loadingHtml();
   const user = await getUser();
   if (!user) return renderAuthGate();
-  renderCreateForm(user);
+  const billing = await getBilling();
+  // The real gate is the RLS policy on tournaments; this just avoids letting
+  // someone fill in a whole form only to have the insert rejected.
+  if (!billingHasAccess(billing)) return renderPaywall(billing, "create");
+  renderCreateForm(user, billing);
+}
+
+// ---------- billing ----------
+
+// Cached per page load: the trial banner, the create screen and the admin
+// dashboard all ask, and it doesn't change mid-session.
+let billingCache = null;
+async function getBilling(force) {
+  if (billingCache && !force) return billingCache;
+  const user = await getUser();
+  if (!user) return null;
+  const { data } = await sb
+    .from("organizer_billing")
+    .select("trial_ends_at, is_exempt, subscription_status, current_period_end, stripe_customer_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  billingCache = data || null;
+  return billingCache;
+}
+
+// Mirrors public.has_teeboard_access() in the database. If these ever
+// disagree, the database wins — this only decides what UI to show.
+function billingHasAccess(b) {
+  if (!b) return false;
+  if (b.is_exempt) return true;
+  if (["active", "trialing"].includes(b.subscription_status)) return true;
+  return new Date(b.trial_ends_at).getTime() > Date.now();
+}
+
+function trialDaysLeft(b) {
+  if (!b) return 0;
+  return Math.max(0, Math.ceil((new Date(b.trial_ends_at).getTime() - Date.now()) / 86400000));
+}
+
+// Shown while on trial so the deadline isn't a surprise. Hidden for exempt
+// accounts and anyone already subscribed.
+function trialBannerHtml(b) {
+  if (!b || b.is_exempt) return "";
+  if (["active", "trialing"].includes(b.subscription_status)) return "";
+  const days = trialDaysLeft(b);
+  if (days > 14) return "";
+  const urgent = days <= 3;
+  return `
+    <a href="#/billing" class="card p-3.5 mb-2.5 flex items-center gap-3"
+       style="background:${urgent ? "#FDF2F2" : "var(--grass-100)"};border-color:${urgent ? "#F1CFD0" : "var(--grass-200)"}">
+      <span class="shrink-0" style="color:${urgent ? "var(--under)" : "var(--grass-700)"}">${icon("trophy", 18)}</span>
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-bold" style="color:${urgent ? "var(--under)" : "var(--grass-700)"}">
+          ${days === 0 ? "Free trial ends today" : `${days} day${days === 1 ? "" : "s"} left in your free trial`}
+        </div>
+        <div class="text-xs" style="color:${urgent ? "var(--under)" : "var(--grass-600)"};opacity:.85">$30/month after that — tap to subscribe</div>
+      </div>
+      <span class="shrink-0" style="color:${urgent ? "var(--under)" : "var(--grass-700)"}">${icon("arrow", 16)}</span>
+    </a>`;
+}
+
+async function startCheckout(btn, statusEl) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Opening checkout…";
+  const { data, error } = await sb.functions.invoke("create-checkout", {
+    body: { returnUrl: location.origin + location.pathname },
+  });
+  if (error || !data?.url) {
+    btn.disabled = false;
+    btn.textContent = original;
+    const msg = data?.error || error?.message || "Couldn't start checkout.";
+    if (statusEl) {
+      statusEl.className = "text-xs mt-3 status-err";
+      statusEl.textContent = msg;
+    } else {
+      toast(msg, true);
+    }
+    return;
+  }
+  // Stripe Checkout is a full redirect; card details never touch TeeBoard.
+  location.href = data.url;
+}
+
+async function openBillingPortal(btn) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Opening…";
+  const { data, error } = await sb.functions.invoke("customer-portal", {
+    body: { returnUrl: location.origin + location.pathname },
+  });
+  if (error || !data?.url) {
+    btn.disabled = false;
+    btn.textContent = original;
+    return toast(data?.error || error?.message || "Couldn't open billing portal.", true);
+  }
+  location.href = data.url;
+}
+
+// Blocks the create/admin screens once trial and subscription are both gone.
+function renderPaywall(billing, context) {
+  const ended = billing ? new Date(billing.trial_ends_at).toLocaleDateString() : "";
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-6 pb-6 mb-3">
+      <div class="eyebrow on-dark mb-2">Subscription needed</div>
+      <h1 class="display" style="font-size:2.1rem;color:#fff">Your free trial has ended</h1>
+      <p class="mt-3 text-[15px]" style="color:rgba(255,255,255,.6)">
+        ${context === "admin"
+          ? "Managing tournaments needs an active subscription."
+          : "Creating tournaments needs an active subscription."}
+        ${ended ? `Your trial ran out on ${escapeHtml(ended)}.` : ""}
+      </p>
+    </section>
+
+    <div class="card p-5 mb-3">
+      <div class="flex items-baseline gap-2 mb-1">
+        <span class="num-display" style="font-size:2.6rem">$30</span>
+        <span class="eyebrow">per month</span>
+      </div>
+      <p class="text-sm muted mb-4">Unlimited tournaments, unlimited players, live leaderboards. Cancel any time.</p>
+      <button id="subscribe-btn" class="btn-green w-full">Subscribe</button>
+      <div id="billing-status" class="text-xs mt-3"></div>
+    </div>
+
+    <div class="card p-4">
+      <p class="text-xs muted">
+        Rounds already running are unaffected — players keep scoring and leaderboards stay live.
+        You can still open and delete your existing tournaments.
+      </p>
+    </div>`;
+
+  document.getElementById("subscribe-btn").addEventListener("click", (e) =>
+    startCheckout(e.currentTarget, document.getElementById("billing-status")));
+}
+
+// #/billing — subscribe, or manage an existing subscription.
+async function viewBilling() {
+  app.innerHTML = loadingHtml();
+  const user = await getUser();
+  if (!user) return renderAuthGate();
+
+  // Coming back from Stripe: the webhook may not have landed yet, so re-read
+  // once rather than showing a stale "not subscribed".
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  if (params.get("checkout") === "success") {
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  const b = await getBilling(true);
+
+  const active = ["active", "trialing"].includes(b?.subscription_status);
+  const renews = b?.current_period_end ? new Date(b.current_period_end).toLocaleDateString() : null;
+
+  app.innerHTML = `
+    <div class="mb-4">
+      <div class="eyebrow mb-1">Account</div>
+      <h1 class="text-2xl">Billing</h1>
+      <p class="text-sm muted mt-1">${escapeHtml(user.email)}</p>
+    </div>
+
+    ${b?.is_exempt ? `
+      <div class="card p-5 text-center">
+        <div class="mx-auto mb-3 flex items-center justify-center rounded-2xl"
+             style="width:3rem;height:3rem;background:var(--grass-100);color:var(--grass-700)">${icon("check", 22)}</div>
+        <p class="font-bold mb-1">No subscription needed</p>
+        <p class="text-sm muted">This account has full access permanently.</p>
+      </div>
+    ` : active ? `
+      <div class="card p-5 mb-3">
+        <div class="flex items-center justify-between mb-3">
+          <span class="eyebrow">Status</span>
+          <span class="pill open"><span class="dot"></span>${escapeHtml(b.subscription_status)}</span>
+        </div>
+        <div class="flex items-baseline gap-2 mb-1">
+          <span class="num-display" style="font-size:2.2rem">$30</span>
+          <span class="eyebrow">per month</span>
+        </div>
+        ${renews ? `<p class="text-sm muted mt-2">Renews ${escapeHtml(renews)}.</p>` : ""}
+      </div>
+      <button id="portal-btn" class="btn-secondary w-full">Manage billing</button>
+      <p class="text-xs muted-2 text-center mt-2">Update your card, view invoices or cancel — handled by Stripe.</p>
+    ` : `
+      ${params.get("checkout") === "success" ? `
+        <div class="card p-3.5 mb-3 flex items-start gap-3" style="background:var(--grass-100);border-color:var(--grass-200)">
+          <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("check", 18)}</span>
+          <p class="text-sm" style="color:var(--grass-700)">Payment received — if this page still says inactive, give it a few seconds and refresh.</p>
+        </div>` : ""}
+      <div class="card p-5 mb-3">
+        <div class="eyebrow mb-2">${trialDaysLeft(b) > 0 ? `Free trial · ${trialDaysLeft(b)} days left` : "Trial ended"}</div>
+        <div class="flex items-baseline gap-2 mb-1">
+          <span class="num-display" style="font-size:2.6rem">$30</span>
+          <span class="eyebrow">per month</span>
+        </div>
+        <p class="text-sm muted mb-4">Unlimited tournaments, unlimited players, live leaderboards. Cancel any time.</p>
+        <button id="subscribe-btn" class="btn-green w-full">Subscribe</button>
+        <div id="billing-status" class="text-xs mt-3"></div>
+      </div>
+    `}
+
+    <a href="#/" class="btn-ghost block text-center mt-4">Back to TeeBoard</a>`;
+
+  const sub = document.getElementById("subscribe-btn");
+  if (sub) sub.addEventListener("click", (e) =>
+    startCheckout(e.currentTarget, document.getElementById("billing-status")));
+  const portal = document.getElementById("portal-btn");
+  if (portal) portal.addEventListener("click", (e) => openBillingPortal(e.currentTarget));
 }
 
 // ---------- sign-up throttling ----------
@@ -1242,8 +1452,9 @@ async function viewResetPassword() {
   });
 }
 
-function renderCreateForm(user) {
+function renderCreateForm(user, billing) {
   app.innerHTML = `
+    ${trialBannerHtml(billing)}
     <div class="mb-4">
       <div class="eyebrow mb-1">Organizer · ${escapeHtml(user.email)}</div>
       <h1 class="text-2xl">Create a tournament</h1>
@@ -1565,6 +1776,13 @@ async function viewAdmin(tournamentId) {
   // pre-accounts tournaments; those have since been assigned real owners.
   // Mirrored by RLS, so a forged client can't get past it either.
   const isOwner = !!user && tournament.created_by === user.id;
+
+  // An owner whose trial and subscription have both lapsed sees the paywall
+  // rather than a dashboard whose every control would be rejected by RLS.
+  if (isOwner) {
+    const billing = await getBilling();
+    if (!billingHasAccess(billing)) return renderPaywall(billing, "admin");
+  }
 
   // Which teams currently have their "manage" panel open — kept outside
   // render() so it survives re-renders (e.g. after adding another player,

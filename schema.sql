@@ -181,3 +181,92 @@ update tournaments t
  where t.created_by is null;
 
 alter table tournaments alter column created_by set not null;
+
+-- =====================================================================
+-- BILLING: 30-day free trial, then $30/month per organizer.
+--
+-- Enforcement lives here, not in the app. TeeBoard is static files with a
+-- public anon key, so anything gated only in JavaScript can be bypassed by
+-- editing it in a browser. The policies below are the actual paywall.
+--
+-- organizer_billing has a SELECT policy and deliberately no INSERT/UPDATE
+-- policy: only the stripe-webhook Edge Function (service role, which bypasses
+-- RLS) may change subscription state. A tampered client cannot grant itself
+-- access by writing to its own row.
+-- =====================================================================
+
+create table if not exists organizer_billing (
+  user_id                uuid primary key references auth.users(id) on delete cascade,
+  trial_ends_at          timestamptz not null default (now() + interval '30 days'),
+  is_exempt              boolean     not null default false,  -- comped accounts
+  stripe_customer_id     text,
+  stripe_subscription_id text,
+  subscription_status    text,        -- Stripe's status: active, past_due, canceled, ...
+  current_period_end     timestamptz,
+  updated_at             timestamptz not null default now(),
+  created_at             timestamptz not null default now()
+);
+
+alter table organizer_billing enable row level security;
+
+drop policy if exists "read own billing" on organizer_billing;
+create policy "read own billing" on organizer_billing
+  for select using (auth.uid() = user_id);
+
+-- Single source of truth for "may this organizer run tournaments?".
+create or replace function public.has_teeboard_access(uid uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select b.is_exempt
+        or now() < b.trial_ends_at
+        or b.subscription_status in ('active', 'trialing')
+    from organizer_billing b where b.user_id = uid
+  ), false);
+$$;
+
+revoke all on function public.has_teeboard_access(uuid) from public;
+grant execute on function public.has_teeboard_access(uuid) to authenticated, anon;
+
+-- Every new organizer starts a 30-day trial automatically.
+create or replace function public.start_teeboard_trial()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into organizer_billing (user_id, trial_ends_at)
+  values (new.id, now() + interval '30 days')
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_start_trial on auth.users;
+create trigger on_auth_user_created_start_trial
+  after insert on auth.users
+  for each row execute function public.start_teeboard_trial();
+
+-- Backfill anyone who signed up before billing existed.
+insert into organizer_billing (user_id, trial_ends_at)
+select u.id, u.created_at + interval '30 days' from auth.users u
+on conflict (user_id) do nothing;
+
+-- The paywall itself. Creating and managing require access; deleting never
+-- does, so someone who stops paying can still remove their own data.
+drop policy if exists "authenticated users can create tournaments" on tournaments;
+drop policy if exists "subscribed organizers can create tournaments" on tournaments;
+create policy "subscribed organizers can create tournaments" on tournaments
+  for insert with check (
+    auth.uid() is not null
+    and created_by = auth.uid()
+    and public.has_teeboard_access(auth.uid())
+  );
+
+drop policy if exists "only owner can update their tournament" on tournaments;
+drop policy if exists "subscribed owner can update their tournament" on tournaments;
+create policy "subscribed owner can update their tournament" on tournaments
+  for update using (auth.uid() = created_by and public.has_teeboard_access(auth.uid()));
+
+-- Players are never gated: teams, team_members and scores keep their public
+-- policies so a round in progress is unaffected by the organizer's billing.
+
+-- Comp an account (never pays):
+--   update organizer_billing b set is_exempt = true from auth.users u
+--    where u.id = b.user_id and u.email = 'you@example.com';
