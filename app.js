@@ -778,6 +778,8 @@ async function viewHome() {
       </a>
     </div>
 
+    ${!user ? marketingHtml() : ""}
+
     ${teamEntries.length ? `
       <div class="flex items-center gap-3 mt-7 mb-2.5">
         <h2 class="eyebrow">My teams</h2>
@@ -970,6 +972,71 @@ function renderPaywall(billing, context) {
     startCheckout(e.currentTarget, document.getElementById("billing-status")));
 }
 
+// ---------- public landing content ----------
+// Shown only to signed-out visitors. Beyond being useful, this is what a
+// payment processor's review looks for: what's sold, what it costs, who
+// operates it, and how to get hold of them.
+
+// The legal/trading name registered with Stripe. Must match, or activation
+// review flags the site as belonging to a different business.
+const BUSINESS_NAME = "J&G Labs";
+const CONTACT_EMAIL = "jandglabsco@gmail.com";
+
+function marketingHtml() {
+  const step = (n, title, body) => `
+    <div class="flex gap-3">
+      <span class="num-display shrink-0" style="font-size:1.5rem;width:1.6rem;color:var(--grass-600)">${n}</span>
+      <div>
+        <div class="font-bold text-sm">${title}</div>
+        <div class="text-sm muted">${body}</div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="flex items-center gap-3 mt-8 mb-3">
+      <h2 class="eyebrow">How it works</h2>
+      <div class="flex-1 hairline"></div>
+    </div>
+    <div class="card p-5 flex flex-col gap-4">
+      ${step(1, "Create your tournament", "Search your course and we pull real par, yardage and stroke index. You get a 5-character join code and a QR to print.")}
+      ${step(2, "Players join with the code", "No app, no account, no payment. They open the link, find their name or team, and enter scores from their own phone.")}
+      ${step(3, "The leaderboard updates live", "Every phone refreshes the moment a score goes in. Ties are settled by scorecard playoff on the hardest holes.")}
+    </div>
+
+    <div class="flex items-center gap-3 mt-8 mb-3">
+      <h2 class="eyebrow">Pricing</h2>
+      <div class="flex-1 hairline"></div>
+    </div>
+    <div class="card p-5">
+      <div class="flex items-baseline gap-2">
+        <span class="num-display" style="font-size:2.6rem">$30</span>
+        <span class="eyebrow">per month</span>
+      </div>
+      <p class="text-sm muted mt-2 mb-4">
+        Billed monthly in USD to the tournament organizer. <b style="color:var(--ink)">First 30 days free</b> — no card
+        needed to start. Cancel any time; you keep access until the end of the period you've paid for.
+        <b style="color:var(--ink)">Players never pay.</b>
+      </p>
+      <a href="#/create" class="btn-green w-full">Start your 30-day free trial</a>
+    </div>
+
+    <div class="flex items-center gap-3 mt-8 mb-3">
+      <h2 class="eyebrow">Contact</h2>
+      <div class="flex-1 hairline"></div>
+    </div>
+    <div class="card p-5">
+      <p class="text-sm muted">
+        TeeBoard is operated by <b style="color:var(--ink)">${escapeHtml(BUSINESS_NAME)}</b>.
+        Questions, billing problems or refund requests:
+        <a href="mailto:${CONTACT_EMAIL}" class="link-underline font-semibold" style="color:var(--grass-700)">${CONTACT_EMAIL}</a>
+      </p>
+      <div class="flex gap-2 mt-4">
+        <a href="#/terms" class="btn-secondary flex-1 text-sm">Terms</a>
+        <a href="#/refunds" class="btn-secondary flex-1 text-sm">Refunds</a>
+      </div>
+    </div>`;
+}
+
 // ---------- legal pages ----------
 // Plain-language starting points, written to match how TeeBoard actually
 // behaves. NOT drafted by a lawyer — see README before taking real payments.
@@ -982,7 +1049,7 @@ const LEGAL = {
     title: "Terms of Service",
     body: `
       <h2>Who we are</h2>
-      <p>TeeBoard ("we", "us") provides live scoring and leaderboards for golf scrambles and small tournaments at teeboardgolf.com. By creating an account or using the service you agree to these terms.</p>
+      <p>TeeBoard, operated by J&G Labs ("we", "us"), provides live scoring and leaderboards for golf scrambles and small tournaments at teeboardgolf.com. By creating an account or using the service you agree to these terms.</p>
 
       <h2>Accounts</h2>
       <p>Organizers need an account. You're responsible for keeping your password secure and for everything done under your account. Players don't need accounts and never pay — they join with a code.</p>
