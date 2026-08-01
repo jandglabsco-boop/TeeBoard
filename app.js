@@ -884,6 +884,18 @@ function trialBannerHtml(b) {
     </a>`;
 }
 
+// supabase-js puts the response body out of reach on a non-2xx: `data` is null
+// and all you get is "Edge Function returned a non-2xx status code", which
+// tells the user nothing. The real message is in error.context (a Response).
+async function edgeErrorMessage(error, data, fallback) {
+  if (data?.error) return data.error;
+  try {
+    const body = await error?.context?.json?.();
+    if (body?.error) return body.error;
+  } catch { /* body wasn't JSON */ }
+  return error?.message || fallback;
+}
+
 async function startCheckout(btn, statusEl) {
   const original = btn.textContent;
   btn.disabled = true;
@@ -894,7 +906,7 @@ async function startCheckout(btn, statusEl) {
   if (error || !data?.url) {
     btn.disabled = false;
     btn.textContent = original;
-    const msg = data?.error || error?.message || "Couldn't start checkout.";
+    const msg = await edgeErrorMessage(error, data, "Couldn't start checkout.");
     if (statusEl) {
       statusEl.className = "text-xs mt-3 status-err";
       statusEl.textContent = msg;
@@ -917,7 +929,7 @@ async function openBillingPortal(btn) {
   if (error || !data?.url) {
     btn.disabled = false;
     btn.textContent = original;
-    return toast(data?.error || error?.message || "Couldn't open billing portal.", true);
+    return toast(await edgeErrorMessage(error, data, "Couldn't open billing portal."), true);
   }
   location.href = data.url;
 }
