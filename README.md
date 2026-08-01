@@ -100,7 +100,7 @@ variable there restyles the whole app.
 
 - **Scramble format**: one team score per hole (not per-player strokes). Best-ball or stroke-play-per-player would need a small schema change — ask if you want that next.
 - **Organizer accounts, no player login**: creating/managing a tournament needs a Supabase Auth account (email + password); joining and scoring doesn't — players just type a name, and "my team" is remembered on that phone via browser storage.
-- **No password reset flow built in yet.** If an organizer forgets their password, they'd need to reset it from the Supabase dashboard (Authentication → Users) for now.
+- **Password reset** is built in: "Forgot your password?" on the sign-in tab emails a link, and that link opens a set-a-new-password screen. Like confirmation emails, it depends on the Site URL / Redirect URLs being set correctly (step 5 above) — otherwise the link bounces somewhere that can't complete it. Open it in the same browser you requested it from; the links are single-use and last an hour.
 - **Tournaments created before accounts existed** (created_by is empty) stay manageable by anyone with the admin link, so nothing you already made breaks.
 - **Par defaults to 4** on every hole if you don't enter your course's actual pars when creating the tournament (or the course search comes up empty — not every course is in OpenGolfAPI's database yet).
 - **Realtime + 15s fallback polling** on the leaderboard, since course wifi/cell signal can be spotty.

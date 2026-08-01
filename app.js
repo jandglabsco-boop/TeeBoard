@@ -12,6 +12,18 @@ const sb = CONFIGURED ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPAB
 const app = document.getElementById("app");
 const headerSub = document.getElementById("header-sub");
 
+// A recovery link signs the user in like any other magic link, so without
+// this flag we'd just drop them on the home page with no way to actually
+// change their password. PKCE links carry no "type" in the URL, so the auth
+// event is the only reliable signal — it has to be subscribed before the
+// client finishes processing the URL.
+let isPasswordRecovery = false;
+if (sb) {
+  sb.auth.onAuthStateChange((event) => {
+    if (event === "PASSWORD_RECOVERY") isPasswordRecovery = true;
+  });
+}
+
 // ---------- small utilities ----------
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
@@ -596,6 +608,7 @@ const routes = [
   // `view: viewJoin` handed it the match ("#/join"), which pre-filled the code
   // box with that string and auto-fired a doomed lookup on arrival.
   { re: /^#\/join$/, view: () => viewJoin() },
+  { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
@@ -679,6 +692,15 @@ async function handleAuthCallback() {
     // Implicit flow — supabase-js parses the hash itself on startup; this just
     // waits for it to have finished before we redraw.
     await sb.auth.getSession();
+  }
+
+  // A recovery link lands here too. Sending them to the home page signed in
+  // would technically "work" while leaving them no way to set a new password,
+  // which is exactly what makes the reset email feel broken.
+  if (isPasswordRecovery || hashParams.get("type") === "recovery") {
+    history.replaceState(null, "", base + "#/reset");
+    route();
+    return true;
   }
 
   history.replaceState(null, "", base + "#/");
@@ -831,9 +853,10 @@ function renderAuthGate() {
   // Default to Sign Up: most people hitting this gate are brand new
   // organizers who don't have an account yet. Returning organizers can
   // still tap "Sign In".
-  let mode = "signup";
+  let mode = "signup";       // "signup" | "signin" | "forgot"
   let pendingEmail = null;   // set once a confirmation email has gone out
   let resendAt = 0;          // timestamp the resend button unlocks
+  let resetSentTo = null;    // set once a reset email has gone out
 
   function drawPending() {
     app.innerHTML = `
@@ -896,8 +919,85 @@ function renderAuthGate() {
     });
   }
 
+  function drawForgot() {
+    app.innerHTML = `
+      <div class="mb-4">
+        <div class="eyebrow mb-1">Password reset</div>
+        <h1 class="text-2xl">Forgot your password?</h1>
+      </div>
+      <div class="card p-5">
+        ${resetSentTo ? `
+          <div class="flex items-start gap-3 p-3 rounded-lg mb-4" style="background:var(--grass-100)">
+            <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("check", 18)}</span>
+            <p class="text-sm" style="color:var(--grass-700)">
+              If an account exists for <b>${escapeHtml(resetSentTo)}</b>, a reset link is on its way.
+              It lasts one hour and can only be used once.
+            </p>
+          </div>
+        ` : `
+          <p class="text-sm muted mb-4">Enter your email and we'll send a link to set a new one. Open it in this browser.</p>
+        `}
+        <label class="field-label">Email</label>
+        <input id="forgot-email" type="email" autocomplete="email" placeholder="you@email.com" class="mb-4"
+               value="${escapeHtml(resetSentTo || "")}" />
+        <button id="send-reset" class="btn-primary w-full mb-2">${resetSentTo ? "Send again" : "Send reset link"}</button>
+        <button id="back-to-signin" class="btn-ghost">Back to sign in</button>
+        <div id="auth-status" class="text-xs mt-3"></div>
+      </div>`;
+
+    const btn = document.getElementById("send-reset");
+    const statusEl = document.getElementById("auth-status");
+
+    // Cooldown so repeat taps don't trip Supabase's own email rate limit.
+    const tick = () => {
+      const left = resendAt - Date.now();
+      if (left > 0) {
+        btn.disabled = true;
+        btn.textContent = `Send again in ${Math.ceil(left / 1000)}s`;
+        setTimeout(tick, 500);
+      } else {
+        btn.disabled = false;
+        btn.textContent = resetSentTo ? "Send again" : "Send reset link";
+      }
+    };
+    tick();
+
+    btn.addEventListener("click", async () => {
+      const email = document.getElementById("forgot-email").value.trim();
+      if (!email) {
+        statusEl.className = "text-xs mt-3 status-err";
+        statusEl.textContent = "Enter your email address.";
+        return;
+      }
+      btn.disabled = true;
+      statusEl.className = "text-xs mt-3 status-info";
+      statusEl.textContent = "Sending…";
+
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: authRedirectTo() });
+      if (error) {
+        statusEl.className = "text-xs mt-3 status-err";
+        statusEl.textContent = /rate limit/i.test(error.message)
+          ? "Too many emails just now — give it a few minutes."
+          : error.message;
+        btn.disabled = false;
+        return;
+      }
+      // Deliberately not revealing whether the address has an account.
+      resetSentTo = email;
+      resendAt = Date.now() + RESEND_COOLDOWN_MS;
+      drawForgot();
+    });
+
+    document.getElementById("back-to-signin").addEventListener("click", () => {
+      mode = "signin";
+      resetSentTo = null;
+      draw();
+    });
+  }
+
   function draw() {
     if (pendingEmail) return drawPending();
+    if (mode === "forgot") return drawForgot();
 
     const blockedFor = signupBlockedFor();
 
@@ -951,6 +1051,12 @@ function renderAuthGate() {
         <button id="auth-submit" class="btn-primary w-full" ${mode === "signup" && blockedFor ? "disabled" : ""}>
           ${mode === "signup" ? "Create account" : "Sign in"}
         </button>
+
+        ${mode === "signin" ? `
+          <div class="text-center mt-3">
+            <button id="forgot-link" class="btn-ghost">Forgot your password?</button>
+          </div>
+        ` : ""}
         <div id="auth-status" class="text-xs mt-3">${
           mode === "signup" && blockedFor
             ? `<span class="status-err">Too many sign-up attempts. Try again in ${humanDuration(blockedFor)}.</span>`
@@ -961,6 +1067,15 @@ function renderAuthGate() {
 
     document.getElementById("tab-signin").addEventListener("click", () => { mode = "signin"; draw(); });
     document.getElementById("tab-signup").addEventListener("click", () => { mode = "signup"; draw(); });
+
+    const forgotLink = document.getElementById("forgot-link");
+    if (forgotLink) {
+      forgotLink.addEventListener("click", () => {
+        mode = "forgot";
+        resendAt = 0;
+        draw();
+      });
+    }
 
     const submit = document.getElementById("auth-submit");
     app.querySelectorAll("input").forEach((inp) => {
@@ -1038,6 +1153,77 @@ function renderAuthGate() {
   }
 
   draw();
+}
+
+// Where a password-recovery link lands. The link itself has already created a
+// session by this point, so the only thing left is choosing a new password.
+async function viewResetPassword() {
+  app.innerHTML = loadingHtml();
+  const user = await getUser();
+
+  if (!user) {
+    // Expired, already used, or opened in a different browser than the one
+    // that requested it (PKCE keeps its verifier in local storage).
+    app.innerHTML = `
+      <div class="mb-4">
+        <div class="eyebrow mb-1">Password reset</div>
+        <h1 class="text-2xl">That link has expired</h1>
+      </div>
+      <div class="card p-5">
+        <p class="text-sm muted mb-4">Reset links are single-use and last one hour. Open the newest email, and use the same browser you requested it from.</p>
+        <a href="#/create" class="btn-primary w-full">Request a new link</a>
+      </div>`;
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="mb-4">
+      <div class="eyebrow mb-1">Password reset</div>
+      <h1 class="text-2xl">Choose a new password</h1>
+      <p class="text-sm muted mt-1">for ${escapeHtml(user.email)}</p>
+    </div>
+    <div class="card p-5">
+      <label class="field-label">New password</label>
+      <input id="new-password" type="password" autocomplete="new-password" placeholder="At least 6 characters" class="mb-4" />
+      <label class="field-label">Confirm new password</label>
+      <input id="new-password2" type="password" autocomplete="new-password" placeholder="Type it again" class="mb-4" />
+      <button id="save-password" class="btn-primary w-full">Save new password</button>
+      <div id="reset-status" class="text-xs mt-3"></div>
+    </div>`;
+
+  const btn = document.getElementById("save-password");
+  const statusEl = document.getElementById("reset-status");
+  const fail = (msg) => {
+    statusEl.className = "text-xs mt-3 status-err";
+    statusEl.textContent = msg;
+  };
+
+  app.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") btn.click(); });
+  });
+
+  btn.addEventListener("click", async () => {
+    const pw = document.getElementById("new-password").value;
+    const pw2 = document.getElementById("new-password2").value;
+    if (pw.length < 6) return fail("Password needs to be at least 6 characters.");
+    if (pw !== pw2) return fail("Those passwords don't match.");
+
+    btn.disabled = true;
+    statusEl.className = "text-xs mt-3 status-info";
+    statusEl.textContent = "Saving…";
+
+    const { error } = await sb.auth.updateUser({ password: pw });
+    btn.disabled = false;
+    if (error) {
+      return fail(/should be different/i.test(error.message)
+        ? "That's already your current password — pick a different one."
+        : error.message);
+    }
+    isPasswordRecovery = false;
+    renderHeaderProfile();
+    location.hash = "#/";
+    toast("Password updated — you're signed in");
+  });
 }
 
 function renderCreateForm(user) {
