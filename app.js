@@ -1198,7 +1198,18 @@ async function viewBilling() {
           <span class="eyebrow">per month</span>
         </div>
         <p class="text-sm muted mb-4">Unlimited tournaments, unlimited players, live leaderboards. Cancel any time.</p>
-        <button id="subscribe-btn" class="btn-green w-full">Subscribe</button>
+        ${trialDaysLeft(b) > 0 ? `
+          <div class="flex items-start gap-2.5 p-3 rounded-lg mb-4" style="background:var(--grass-100)">
+            <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("check", 16)}</span>
+            <p class="text-sm" style="color:var(--grass-700)">
+              <b>You won't be charged today.</b> Your free trial runs to
+              ${escapeHtml(new Date(b.trial_ends_at).toLocaleDateString())} — the first $30 comes out then,
+              and only if you haven't cancelled.
+            </p>
+          </div>` : ""}
+        <button id="subscribe-btn" class="btn-green w-full">
+          ${trialDaysLeft(b) > 0 ? "Add payment method" : "Subscribe"}
+        </button>
         <div id="billing-status" class="text-xs mt-3"></div>
       </div>
     `}
