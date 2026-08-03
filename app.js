@@ -2612,7 +2612,7 @@ async function viewAdmin(tournamentId) {
           const newName = input.value.trim();
           if (!newName) return toast("Enter a team name", true);
           btn.disabled = true;
-          const { error } = await sb.from("teams").update({ name: newName }).eq("id", id);
+          const { error } = await sb.rpc("organizer_rename_team", { p_team_id: id, p_name: newName });
           btn.disabled = false;
           if (error) return toast("Couldn't rename team: " + error.message, true);
           toast("Team renamed");
@@ -2624,7 +2624,7 @@ async function viewAdmin(tournamentId) {
         btn.addEventListener("click", async () => {
           const id = btn.dataset.removeMember;
           btn.disabled = true;
-          const { error } = await sb.from("team_members").delete().eq("id", id);
+          const { error } = await sb.rpc("organizer_remove_player", { p_member_id: id });
           if (error) {
             btn.disabled = false;
             return toast("Couldn't remove player: " + error.message, true);
@@ -2638,7 +2638,7 @@ async function viewAdmin(tournamentId) {
           const id = btn.dataset.reopenTeam;
           if (!confirm("Reopen this scorecard? The team will be able to edit scores again.")) return;
           btn.disabled = true;
-          const { error } = await sb.from("teams").update({ signed_at: null, signed_by: null }).eq("id", id);
+          const { error } = await sb.rpc("organizer_reopen_card", { p_team_id: id });
           if (error) {
             btn.disabled = false;
             return toast("Couldn't reopen: " + error.message, true);
@@ -2655,7 +2655,7 @@ async function viewAdmin(tournamentId) {
           const playerName = input.value.trim();
           if (!playerName) return toast("Enter a player name", true);
           btn.disabled = true;
-          const { error } = await sb.from("team_members").insert({ team_id: id, player_name: playerName });
+          const { error } = await sb.rpc("organizer_add_player", { p_team_id: id, p_player_name: playerName });
           btn.disabled = false;
           if (error) return toast("Couldn't add player: " + error.message, true);
           expandedTeams.add(id); // keep this team's panel open so you can keep adding players
@@ -2670,21 +2670,19 @@ async function viewAdmin(tournamentId) {
   async function addPlayerManually(teamChoice, newTeamName, playerName) {
     let teamId = teamChoice;
     if (teamChoice === "__new") {
-      let created = null;
-      for (let attempt = 0; attempt < 6 && !created; attempt++) {
-        const code = genCode(4);
-        const { data, error: teamErr } = await sb
-          .from("teams")
-          .insert({ tournament_id: tournamentId, name: newTeamName, join_code: code })
-          .select()
-          .single();
-        if (data) created = data;
-        else if (teamErr && teamErr.code !== "23505") return { error: teamErr.message };
-      }
-      if (!created) return { error: "Couldn't create team, try again." };
+      // The join code is generated server-side now, so the client can't pick
+      // one and collisions are retried inside the database.
+      const { data: created, error: teamErr } = await sb.rpc("organizer_add_team", {
+        p_tournament_id: tournamentId,
+        p_team_name: newTeamName,
+      });
+      if (teamErr || !created) return { error: teamErr?.message || "Couldn't create team, try again." };
       teamId = created.id;
     }
-    const { error: memberErr } = await sb.from("team_members").insert({ team_id: teamId, player_name: playerName });
+    const { error: memberErr } = await sb.rpc("organizer_add_player", {
+      p_team_id: teamId,
+      p_player_name: playerName,
+    });
     if (memberErr) return { error: memberErr.message };
     return { ok: true };
   }
@@ -2759,22 +2757,12 @@ async function viewAdmin(tournamentId) {
           let existingPlayerNames = (team?.team_members || []).map((m) => m.player_name.trim().toLowerCase());
 
           if (!team) {
-            let created = null;
-            for (let attempt = 0; attempt < 6 && !created; attempt++) {
-              const code = genCode(4);
-              const { data, error: teamErr } = await sb
-                .from("teams")
-                .insert({ tournament_id: tournamentId, name: group.name, join_code: code })
-                .select()
-                .single();
-              if (data) created = data;
-              else if (teamErr && teamErr.code !== "23505") {
-                statusEl.textContent = `Error creating team "${group.name}": ${teamErr.message}`;
-                return;
-              }
-            }
-            if (!created) {
-              statusEl.textContent = `Couldn't create team "${group.name}" — try again.`;
+            const { data: created, error: teamErr } = await sb.rpc("organizer_add_team", {
+              p_tournament_id: tournamentId,
+              p_team_name: group.name,
+            });
+            if (teamErr || !created) {
+              statusEl.textContent = `Error creating team "${group.name}": ${teamErr?.message || "try again"}`;
               return;
             }
             team = { id: created.id, name: created.name };
@@ -2784,7 +2772,10 @@ async function viewAdmin(tournamentId) {
 
           for (const playerName of group.players) {
             if (existingPlayerNames.includes(playerName.trim().toLowerCase())) continue;
-            const { error: memberErr } = await sb.from("team_members").insert({ team_id: team.id, player_name: playerName });
+            const { error: memberErr } = await sb.rpc("organizer_add_player", {
+              p_team_id: team.id,
+              p_player_name: playerName,
+            });
             if (!memberErr) playersAdded++;
           }
         }
@@ -2957,20 +2948,15 @@ async function renderTeamStep(tournament) {
       if (!playerName || !teamName) return toast("Enter your name and a team name", true);
       store("bb_player_name", playerName);
 
-      let team = null;
-      for (let attempt = 0; attempt < 6 && !team; attempt++) {
-        const code = genCode(4);
-        const { data, error } = await sb
-          .from("teams")
-          .insert({ tournament_id: tournament.id, name: teamName, join_code: code })
-          .select()
-          .single();
-        if (data) team = data;
-        else if (error && error.code !== "23505") return toast("Error: " + error.message, true);
-      }
-      if (!team) return toast("Couldn't create team, try again", true);
+      // Goes through player_create_team so the write is gated on knowing the
+      // tournament code, rather than on holding the public anon key.
+      const { data: team, error } = await sb.rpc("player_create_team", {
+        p_tournament_code: tournament.join_code,
+        p_team_name: teamName,
+        p_player_name: playerName,
+      });
+      if (error || !team) return toast(error?.message || "Couldn't create team, try again", true);
 
-      await sb.from("team_members").insert({ team_id: team.id, player_name: playerName });
       saveMyTeam(tournament.id, { teamId: team.id, teamName: team.name, teamCode: team.join_code, tournamentCode: tournament.join_code });
       location.hash = `#/team/${team.id}`;
     });
@@ -2989,15 +2975,13 @@ async function renderTeamStep(tournament) {
       if (!playerName || !teamCode) return toast("Enter your name and the team code", true);
       store("bb_player_name", playerName);
 
-      const { data: team, error } = await sb
-        .from("teams")
-        .select("*")
-        .eq("tournament_id", tournament.id)
-        .eq("join_code", teamCode)
-        .maybeSingle();
-      if (error || !team) return toast("No team found with that code", true);
+      const { data: team, error } = await sb.rpc("player_join_team", {
+        p_tournament_code: tournament.join_code,
+        p_team_code: teamCode,
+        p_player_name: playerName,
+      });
+      if (error || !team) return toast(error?.message || "No team found with that code", true);
 
-      await sb.from("team_members").insert({ team_id: team.id, player_name: playerName });
       saveMyTeam(tournament.id, { teamId: team.id, teamName: team.name, teamCode: team.join_code, tournamentCode: tournament.join_code });
       location.hash = `#/team/${team.id}`;
     });
@@ -3077,7 +3061,10 @@ async function viewTeam(teamId) {
         btn.disabled = true;
         btn.textContent = "Signing…";
         const signedAt = new Date().toISOString();
-        const { error } = await sb.from("teams").update({ signed_at: signedAt, signed_by: name }).eq("id", teamId);
+        const { error } = await sb.rpc("player_sign_card", {
+          p_team_code: team.join_code,
+          p_signed_by: name,
+        });
         if (error) {
           toast("Couldn't sign: " + error.message, true);
           btn.disabled = false;
@@ -3217,9 +3204,13 @@ async function viewTeam(teamId) {
   }
 
   async function saveScore(hole, strokes) {
-    const { error } = await sb
-      .from("scores")
-      .upsert({ team_id: teamId, hole_number: hole, strokes, updated_at: new Date().toISOString() }, { onConflict: "team_id,hole_number" });
+    // Gated on the team's own join code, so holding the public anon key is no
+    // longer enough to rewrite somebody else's card.
+    const { error } = await sb.rpc("player_set_score", {
+      p_team_code: team.join_code,
+      p_hole: hole,
+      p_strokes: strokes,
+    });
     if (error) toast("Couldn't save score: " + error.message, true);
     else render();
   }

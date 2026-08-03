@@ -348,3 +348,53 @@ $$;
 
 revoke all on function public.teeboard_stats(int) from public;
 grant execute on function public.teeboard_stats(int) to authenticated;
+
+-- =====================================================================
+-- WRITE LOCKDOWN
+--
+-- teams, team_members and scores previously allowed unrestricted public
+-- INSERT/UPDATE/DELETE, because players have no accounts and had to be able
+-- to score. But the anon key is published in config.js, so anyone who viewed
+-- source could wipe a live scorecard.
+--
+-- Reads stay public — leaderboards must work without an account. Writes now
+-- go through SECURITY DEFINER functions that require proof of knowing a code
+-- (players) or an authenticated owner (organizers). Knowing a join code is
+-- exactly the real-world credential: it's what the organizer hands out.
+-- =====================================================================
+
+create or replace function public.gen_join_code(len int)
+returns text language plpgsql volatile as $$
+declare chars text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; out text := ''; i int;
+begin
+  for i in 1..len loop
+    out := out || substr(chars, 1 + floor(random() * length(chars))::int, 1);
+  end loop;
+  return out;
+end;
+$$;
+
+-- Players: gated on the tournament / team join code.
+--   player_create_team(tournament_code, team_name, player_name) -> json
+--   player_join_team(tournament_code, team_code, player_name)   -> json
+--   player_set_score(team_code, hole, strokes)
+--   player_sign_card(team_code, signed_by)
+--
+-- Organizers: gated on auth.uid() owning the tournament AND having access.
+--   owns_tournament(tournament_id) -> boolean
+--   organizer_add_team(tournament_id, team_name) -> json
+--   organizer_add_player(team_id, player_name)
+--   organizer_rename_team(team_id, name)
+--   organizer_remove_player(member_id)
+--   organizer_reopen_card(team_id)
+--
+-- (Full bodies were applied via migration; see git history for the source.)
+
+-- Remove the permissive policies. Do this only AFTER the client is using the
+-- functions above, or scoring breaks mid-round.
+drop policy if exists "public insert teams"        on teams;
+drop policy if exists "public update teams"        on teams;
+drop policy if exists "public insert team_members" on team_members;
+drop policy if exists "public delete team_members" on team_members;
+drop policy if exists "public insert scores"       on scores;
+drop policy if exists "public update scores"       on scores;
