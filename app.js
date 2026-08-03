@@ -577,6 +577,7 @@ async function renderHeaderProfile() {
         ${fullName ? `<div class="text-sm font-bold">${escapeHtml(fullName)}</div>` : ""}
         <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
         <a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>
+        <a href="#/stats" class="btn-secondary w-full text-sm mb-2">Site traffic</a>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -612,7 +613,9 @@ const routes = [
   { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/billing/, view: () => viewBilling() },
+  { re: /^#\/stats$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
+  { re: /^#\/privacy$/, view: () => viewLegal("privacy") },
   { re: /^#\/refunds$/, view: () => viewLegal("refunds") },
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
@@ -621,10 +624,60 @@ const routes = [
   { re: /^#\/scorecard\/([0-9a-fA-F-]+)$/, view: (m) => viewScorecard(m[1]) },
 ];
 
+// ---------- page views ----------
+// Self-hosted and deliberately minimal: which screen, a random per-browser id
+// so repeat views collapse into one visitor, and the referring host. No IP, no
+// user agent, no link to an account, nothing identifying — which is why this
+// needs no cookie banner.
+
+// Random id kept in localStorage. Identifies a browser, not a person, and
+// clearing site data resets it.
+function viewerSession() {
+  let id = load("bb_session_id", null);
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    store("bb_session_id", id);
+  }
+  return id;
+}
+
+// Collapse ids out of the route so the stats show "#/leaderboard/:id" rather
+// than one row per tournament.
+function normalisedPath(hash) {
+  const h = (hash || "#/").split("?")[0];
+  return h
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ":id")
+    .replace(/#\/join\/[A-Za-z0-9]+/, "#/join/:code")
+    .slice(0, 120);
+}
+
+let lastTrackedPath = null;
+function trackPageView() {
+  if (!sb) return;
+  const path = normalisedPath(location.hash);
+  if (path === lastTrackedPath) return;   // ignore re-renders of the same screen
+  lastTrackedPath = path;
+
+  let referrer = null;
+  try {
+    // Host only — never the full URL, which can carry someone else's query.
+    if (document.referrer && !document.referrer.includes(location.host)) {
+      referrer = new URL(document.referrer).host.slice(0, 120);
+    }
+  } catch { /* malformed referrer */ }
+
+  // Fire and forget: analytics must never delay or break a screen.
+  sb.from("page_views")
+    .insert({ path, session_id: viewerSession(), referrer })
+    .then(() => {}, () => {});
+}
+
 function route() {
   clearRealtime();
   headerSub.innerHTML = "";
   renderHeaderProfile();
+  trackPageView();
   const hash = location.hash || "#/";
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -1032,6 +1085,7 @@ function marketingHtml() {
       </p>
       <div class="flex gap-2 mt-4">
         <a href="#/terms" class="btn-secondary flex-1 text-sm">Terms</a>
+        <a href="#/privacy" class="btn-secondary flex-1 text-sm">Privacy</a>
         <a href="#/refunds" class="btn-secondary flex-1 text-sm">Refunds</a>
       </div>
     </div>`;
@@ -1086,6 +1140,52 @@ const LEGAL = {
       <p>Questions about these terms: <a href="mailto:jandglabsco@gmail.com" class="link-underline">jandglabsco@gmail.com</a>.</p>
     `,
   },
+  privacy: {
+    eyebrow: "Legal",
+    title: "Privacy Policy",
+    body: `
+      <h2>The short version</h2>
+      <p>TeeBoard, operated by J&amp;G Labs, collects as little as it can get away with. Players don't have accounts. We don't sell data, we don't run ad networks, and we don't track you across other websites.</p>
+
+      <h2>If you're a player</h2>
+      <p>You never create an account. What exists about you is whatever name was typed into a team roster — by you or by your organizer — and the scores entered for your team. That's it.</p>
+      <p><b>Anyone with the tournament link or join code can see that.</b> It's designed to work like a scorecard pinned to a clubhouse wall, not a private record. Don't put anything sensitive in a player or team name.</p>
+      <p>Your phone also remembers which team you joined, stored locally in your own browser. That never leaves your device except as the team membership above, and clearing your browser data erases it.</p>
+
+      <h2>If you're an organizer</h2>
+      <p>We store your email, the first and last name you gave at sign-up, and an encrypted form of your password — we can't read your actual password. We also store the tournaments, rosters and scores you create.</p>
+      <p>Email is used to confirm your account, reset your password, and contact you about billing or a problem with the service. We don't send marketing email.</p>
+
+      <h2>Payments</h2>
+      <p>Card details are handled entirely by <a href="https://stripe.com/privacy" target="_blank" class="link-underline">Stripe</a> and never reach TeeBoard. We store only Stripe's customer and subscription identifiers, your subscription status, and when the period ends — enough to know whether your account is active.</p>
+
+      <h2>Analytics</h2>
+      <p>We count page views to see which screens get used. For each view we record the screen (with tournament ids stripped out), the referring website's name, and a random identifier stored in your browser so repeat views can be counted as one visitor.</p>
+      <p>We do <b>not</b> record IP addresses, device or browser details, or anything linking a view to your account. There's no Google Analytics, no advertising pixel, and nothing shared with third parties — which is also why you don't see a cookie banner. Clearing your browser data resets the random identifier.</p>
+
+      <h2>Who else touches your data</h2>
+      <ul>
+        <li><b>Supabase</b> — hosts the database and accounts.</li>
+        <li><b>Stripe</b> — processes payments.</li>
+        <li><b>GitHub Pages</b> — serves the website.</li>
+        <li><b>OpenGolfAPI</b> — course par, yardage and stroke index. We send it a course name you search for; it receives no information about you.</li>
+      </ul>
+      <p>Google Fonts and a few code libraries are loaded from public CDNs when the page opens, which necessarily exposes your IP address to them, as with any website.</p>
+
+      <h2>How long we keep things</h2>
+      <p>Tournaments, rosters and scores stay until deleted. Deleting a tournament permanently removes its teams, players and scores. Page-view records are kept for statistics and hold nothing identifying.</p>
+
+      <h2>Your choices</h2>
+      <p>Organizers can delete their own tournaments at any time from the admin page. To delete your account entirely, or to ask what's held about you, email us and we'll sort it out.</p>
+      <p>Players: ask your organizer to remove you from a roster, or email us if that isn't possible.</p>
+
+      <h2>Children</h2>
+      <p>TeeBoard isn't aimed at children under 13 and organizer accounts aren't intended for them. A junior player's name may appear on a roster because an organizer entered it; contact us if you'd like it removed.</p>
+
+      <h2>Changes and contact</h2>
+      <p>If this policy changes materially we'll say so in the app. Questions, deletion requests or anything else: <a href="mailto:jandglabsco@gmail.com" class="link-underline">jandglabsco@gmail.com</a>.</p>
+    `,
+  },
   refunds: {
     eyebrow: "Legal",
     title: "Refund Policy",
@@ -1121,6 +1221,102 @@ const LEGAL = {
   },
 };
 
+// #/stats — visitor numbers. Restricted to comped (owner) accounts by the
+// teeboard_stats function itself, not just by hiding the link.
+async function viewStats() {
+  app.innerHTML = loadingHtml();
+  const user = await getUser();
+  if (!user) return renderAuthGate();
+
+  const days = parseInt(new URLSearchParams(location.hash.split("?")[1] || "").get("days"), 10) || 30;
+  const { data, error } = await sb.rpc("teeboard_stats", { days });
+
+  if (error || !data) {
+    app.innerHTML = `
+      <div class="card p-6 mt-4 text-center">
+        <div class="eyebrow mb-2">Stats</div>
+        <p class="font-bold mb-1">Not available</p>
+        <p class="text-sm muted mb-4">${escapeHtml(error?.message || "Only the owner account can view these.")}</p>
+        <a href="#/" class="btn-secondary">Back</a>
+      </div>`;
+    return;
+  }
+
+  const peak = Math.max(1, ...(data.by_day || []).map((d) => d.visitors));
+  const bars = (data.by_day || []).slice(-30);
+
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-5 pb-5 mb-2.5">
+      <div class="eyebrow on-dark mb-2">Last ${data.days} days</div>
+      <h1 class="display" style="font-size:2rem;color:#fff">Site traffic</h1>
+      <div class="grid grid-cols-3 gap-3 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
+        <div>
+          <div class="num-display" style="font-size:2rem;color:#fff">${data.visitors}</div>
+          <div class="eyebrow on-dark mt-1">Visitors</div>
+        </div>
+        <div>
+          <div class="num-display" style="font-size:2rem;color:#fff">${data.views}</div>
+          <div class="eyebrow on-dark mt-1">Views</div>
+        </div>
+        <div>
+          <div class="num-display" style="font-size:2rem;color:var(--grass-400)">${data.today}</div>
+          <div class="eyebrow on-dark mt-1">Today</div>
+        </div>
+      </div>
+    </section>
+
+    ${bars.length ? `
+      <div class="card p-5 mb-2.5">
+        <div class="eyebrow mb-3">Visitors per day</div>
+        <div class="flex items-end gap-1" style="height:5rem">
+          ${bars.map((d) => `
+            <div class="flex-1 rounded-t" title="${escapeHtml(d.day)}: ${d.visitors}"
+                 style="height:${Math.max(4, Math.round((d.visitors / peak) * 100))}%;background:var(--grass-500);min-width:3px"></div>
+          `).join("")}
+        </div>
+        <div class="flex justify-between mt-2">
+          <span class="eyebrow">${escapeHtml(bars[0]?.day || "")}</span>
+          <span class="eyebrow">${escapeHtml(bars[bars.length - 1]?.day || "")}</span>
+        </div>
+      </div>` : `
+      <div class="card p-6 text-center mb-2.5">
+        <p class="font-semibold mb-1">No views recorded yet</p>
+        <p class="text-sm muted">Tracking started just now — come back after some traffic.</p>
+      </div>`}
+
+    ${(data.top_pages || []).length ? `
+      <div class="flex items-center gap-3 mt-6 mb-2.5">
+        <h2 class="eyebrow">Most viewed screens</h2><span class="flex-1 hairline"></span>
+      </div>
+      <div class="card overflow-hidden">
+        ${data.top_pages.map((p) => `
+          <div class="flex items-center justify-between px-4 py-2.5" style="border-top:1px solid var(--line)">
+            <span class="text-sm truncate" style="font-family:ui-monospace,monospace">${escapeHtml(p.path)}</span>
+            <span class="shrink-0 ml-3"><span class="num-display">${p.views}</span>
+              <span class="eyebrow ml-1">${p.visitors} ppl</span></span>
+          </div>`).join("")}
+      </div>` : ""}
+
+    ${(data.referrers || []).length ? `
+      <div class="flex items-center gap-3 mt-6 mb-2.5">
+        <h2 class="eyebrow">Where they came from</h2><span class="flex-1 hairline"></span>
+      </div>
+      <div class="card overflow-hidden">
+        ${data.referrers.map((r) => `
+          <div class="flex items-center justify-between px-4 py-2.5" style="border-top:1px solid var(--line)">
+            <span class="text-sm truncate">${escapeHtml(r.source)}</span>
+            <span class="num-display shrink-0 ml-3">${r.visitors}</span>
+          </div>`).join("")}
+      </div>` : ""}
+
+    <div class="grid grid-cols-3 gap-2 mt-4">
+      ${[7, 30, 90].map((d) => `
+        <a href="#/stats?days=${d}" class="btn-secondary text-sm ${d === data.days ? "" : ""}"
+           style="${d === data.days ? "border-color:var(--ink);font-weight:700" : ""}">${d} days</a>`).join("")}
+    </div>
+    <a href="#/" class="btn-ghost block text-center mt-4">Back to TeeBoard</a>`;
+}
+
 function viewLegal(which) {
   const doc = LEGAL[which];
   if (!doc) return viewHome();
@@ -1131,11 +1327,11 @@ function viewLegal(which) {
       <p class="text-sm muted mt-1">Last updated ${LEGAL_UPDATED}</p>
     </div>
     <div class="card p-5 legal-doc">${doc.body}</div>
-    <div class="flex gap-2 mt-3">
-      <a href="#/${which === "terms" ? "refunds" : "terms"}" class="btn-secondary flex-1 text-sm">
-        ${which === "terms" ? "Refund Policy" : "Terms of Service"}
-      </a>
-      <a href="#/" class="btn-secondary flex-1 text-sm">Back</a>
+    <div class="grid grid-cols-3 gap-2 mt-3">
+      ${["terms", "privacy", "refunds"].filter((k) => k !== which).map((k) => `
+        <a href="#/${k}" class="btn-secondary text-sm">${LEGAL[k].title.replace(" of Service", "").replace(" Policy", "")}</a>
+      `).join("")}
+      <a href="#/" class="btn-secondary text-sm">Back</a>
     </div>`;
   window.scrollTo(0, 0);
 }

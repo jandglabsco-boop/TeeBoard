@@ -270,3 +270,81 @@ create policy "subscribed owner can update their tournament" on tournaments
 -- Comp an account (never pays):
 --   update organizer_billing b set is_exempt = true from auth.users u
 --    where u.id = b.user_id and u.email = 'you@example.com';
+
+-- =====================================================================
+-- PAGE VIEWS (self-hosted analytics)
+--
+-- Deliberately stores no IP address, no user agent, no account link and
+-- nothing identifying: only which screen was viewed, a random per-browser
+-- id so repeat views collapse into visitors, and the referring host. That
+-- keeps it out of "personal data" for most purposes and is why the app
+-- needs no cookie banner. Anyone may insert (visitors are anonymous);
+-- only comped accounts may read.
+-- =====================================================================
+
+create table if not exists page_views (
+  id         bigint generated always as identity primary key,
+  path       text not null,               -- normalised route, e.g. #/leaderboard/:id
+  session_id uuid not null,               -- random per browser, not per person
+  referrer   text,                        -- host only, never a full URL
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_page_views_created on page_views(created_at desc);
+create index if not exists idx_page_views_path on page_views(path);
+
+alter table page_views enable row level security;
+
+drop policy if exists "anyone can record a view" on page_views;
+create policy "anyone can record a view" on page_views
+  for insert with check (
+    length(path) <= 120 and (referrer is null or length(referrer) <= 120)
+  );
+
+drop policy if exists "owners can read views" on page_views;
+create policy "owners can read views" on page_views
+  for select using (
+    exists (select 1 from organizer_billing b
+             where b.user_id = auth.uid() and b.is_exempt)
+  );
+
+-- Aggregates for the in-app #/stats screen. SECURITY DEFINER so it can read
+-- page_views, but it re-checks the caller is comped before returning anything.
+create or replace function public.teeboard_stats(days int default 30)
+returns json language plpgsql stable security definer set search_path = public as $$
+declare
+  since timestamptz := now() - make_interval(days => greatest(1, least(days, 365)));
+  result json;
+begin
+  if not exists (select 1 from organizer_billing b
+                  where b.user_id = auth.uid() and b.is_exempt) then
+    raise exception 'not authorised';
+  end if;
+
+  select json_build_object(
+    'days', days,
+    'views',    (select count(*) from page_views where created_at >= since),
+    'visitors', (select count(distinct session_id) from page_views where created_at >= since),
+    'today',    (select count(distinct session_id) from page_views
+                  where created_at >= date_trunc('day', now())),
+    'top_pages', (select coalesce(json_agg(x), '[]'::json) from (
+        select path, count(*) as views, count(distinct session_id) as visitors
+        from page_views where created_at >= since
+        group by path order by count(*) desc limit 10) x),
+    'by_day', (select coalesce(json_agg(x order by x.day), '[]'::json) from (
+        select date_trunc('day', created_at)::date as day,
+               count(distinct session_id) as visitors
+        from page_views where created_at >= since group by 1) x),
+    'referrers', (select coalesce(json_agg(x), '[]'::json) from (
+        select coalesce(nullif(referrer,''), 'direct') as source,
+               count(distinct session_id) as visitors
+        from page_views where created_at >= since
+        group by 1 order by 2 desc limit 8) x)
+  ) into result;
+
+  return result;
+end;
+$$;
+
+revoke all on function public.teeboard_stats(int) from public;
+grant execute on function public.teeboard_stats(int) to authenticated;
