@@ -125,6 +125,68 @@ jobs:
           fi
           echo "API key validated."
 
+      # Ask Apple whether the credentials actually work, before xcodebuild
+      # spends twenty minutes to report the same thing as an opaque 401
+      # buried in provisioning output.
+      - name: Check credentials against Apple
+        if: steps.signing.outputs.ready == 'true'
+        env:
+          KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPSTORE_TEAM_ID }}
+        run: |
+          pip3 install --quiet --disable-pip-version-check pyjwt cryptography
+          python3 - <<'PY'
+          import os, sys, time, json, urllib.request, urllib.error, jwt
+
+          key_id, issuer, team = os.environ["KEY_ID"], os.environ["ISSUER_ID"], os.environ["TEAM_ID"]
+          key = open(os.path.expanduser(f"~/private_keys/AuthKey_{key_id}.p8")).read()
+
+          print(f"Key ID    : {len(key_id)} chars")
+          print(f"Issuer ID : {len(issuer)} chars, {'looks like a UUID' if issuer.count('-') == 4 else 'NOT UUID-shaped'}")
+          print(f"Team ID   : {len(team)} chars" + ("" if len(team) == 10 else "  <-- Apple team IDs are 10 characters"))
+
+          token = jwt.encode(
+              {"iss": issuer, "iat": int(time.time()), "exp": int(time.time()) + 900,
+               "aud": "appstoreconnect-v1"},
+              key, algorithm="ES256", headers={"kid": key_id, "typ": "JWT"})
+
+          def call(path):
+              req = urllib.request.Request(
+                  "https://api.appstoreconnect.apple.com/v1/" + path,
+                  headers={"Authorization": "Bearer " + token})
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return r.status, json.load(r)
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode()[:400]
+
+          status, body = call("apps?limit=200")
+          if status == 401:
+              print("::error::Apple rejected the credentials (401). The key and Issuer ID do not "
+                    "match, or the key has been revoked. Both are on "
+                    "https://appstoreconnect.apple.com/access/integrations/api - the Issuer ID is "
+                    "at the top of the page, above the key list.")
+              sys.exit(1)
+          if status != 200:
+              print(f"::error::App Store Connect returned {status}: {body}")
+              sys.exit(1)
+
+          print("\nCredentials accepted by Apple.")
+          apps = {a["attributes"]["bundleId"]: a["attributes"]["name"] for a in body["data"]}
+          print(f"Apps visible to this key: {len(apps)}")
+          for bid, name in sorted(apps.items()):
+              print(f"  {bid}  ({name})")
+
+          want = "com.jandglabs.teeboard"
+          if want not in apps:
+              print(f"::error::No app record for {want}. Create it at "
+                    "https://appstoreconnect.apple.com/apps - My Apps, +, New App - or, if it "
+                    "exists, give this API key access to it under Users and Access.")
+              sys.exit(1)
+          print(f"\nFound the app record for {want}.")
+          PY
+
       - name: Archive with automatic signing
         if: steps.signing.outputs.ready == 'true'
         env:
