@@ -110,7 +110,13 @@ jobs:
 
           # Fail here, loudly, rather than 20 minutes later inside xcodebuild.
           if ! grep -q 'BEGIN PRIVATE KEY' "$KEY_FILE"; then
-            echo "::error::APPSTORE_API_KEY_P8 is not a valid .p8 key. Re-add it with: openssl base64 -A -in AuthKey_XXXX.p8 | pbcopy"
+            # The commonest mistake by far: the Key ID pasted into the key box.
+            # They sit next to each other on Apple's page and read alike.
+            if printf '%s' "$KEY_P8" | grep -qE '^[A-Z0-9]{8,12}$'; then
+              echo "::error::APPSTORE_API_KEY_P8 contains a short ID, not a key. It needs the *contents of the .p8 file* (~340 chars). The ID belongs in APPSTORE_API_KEY_ID. Fix with: bash tools/setup-appstore-secrets.sh"
+            else
+              echo "::error::APPSTORE_API_KEY_P8 is not a valid .p8 key. Fix with: bash tools/setup-appstore-secrets.sh"
+            fi
             exit 1
           fi
           if ! openssl pkey -in "$KEY_FILE" -noout 2>/dev/null; then
