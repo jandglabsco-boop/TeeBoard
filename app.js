@@ -253,6 +253,27 @@ function strokeAllocation(tournament, handicap) {
   return alloc;
 }
 
+// Skins payout.
+//
+// Everyone antes the same buy-in, and the whole pot is shared between the
+// skins actually won. A hole that ties carries over, so if the last holes are
+// halved those skins are never awarded — dividing by skins WON rather than
+// holes played means that money rolls into the skins that were won, instead of
+// vanishing. If nobody wins a skin outright, nothing is paid and the pot is
+// returned.
+function skinsPayout(tournament, rows) {
+  const buyIn = Number(tournament.skins_buy_in) || 0;
+  const entrants = rows.length;
+  const pot = buyIn * entrants;
+  const skinsWon = rows.reduce((sum, r) => sum + (r.skins || 0), 0);
+  const perSkin = skinsWon > 0 ? pot / skinsWon : 0;
+  return { buyIn, entrants, pot, skinsWon, perSkin };
+}
+
+function money(n) {
+  return `$${(Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/, "")}`;
+}
+
 // Stableford: 2 points for a net par, one more per shot better, one fewer per
 // shot worse, never below zero.
 function stablefordPoints(netStrokes, par) {
@@ -2066,6 +2087,15 @@ function renderCreateForm(user, billing) {
         </select>
         <p id="format-blurb" class="text-xs muted-2 mt-1.5 leading-relaxed"></p>
       </div>
+      <div id="buyin-wrap" class="hidden">
+        <label class="field-label">Buy-in per player</label>
+        <input id="buyin-input" name="buyin" type="number" min="0" max="10000" step="1"
+               inputmode="decimal" placeholder="e.g. 20" />
+        <p class="text-xs muted-2 mt-1.5 leading-relaxed">
+          Optional. Everyone antes this much; the whole pot is split between the skins actually won,
+          so carried-over holes make the remaining skins worth more. Leave blank to play for pride.
+        </p>
+      </div>
       <div>
         <label class="field-label">Holes</label>
         <select id="holes-select" name="holes">
@@ -2086,11 +2116,13 @@ function renderCreateForm(user, billing) {
 
   const formatSelect = document.getElementById("format-select");
   const formatBlurb = document.getElementById("format-blurb");
+  const buyinWrap = document.getElementById("buyin-wrap");
   const refreshFormatBlurb = () => {
     const f = FORMATS[formatSelect.value];
     formatBlurb.textContent = f
       ? `${f.blurb}${f.scoring === "player" ? " Every player records their own score." : ""}`
       : "";
+    buyinWrap.classList.toggle("hidden", formatSelect.value !== "skins");
   };
   formatSelect.addEventListener("change", refreshFormatBlurb);
   refreshFormatBlurb();
@@ -2338,6 +2370,9 @@ function renderCreateForm(user, billing) {
         .insert({
           name, course_name: course || null, join_code: code, num_holes: numHoles, par,
           format: formatSelect.value,
+          skins_buy_in: formatSelect.value === "skins"
+            ? (parseFloat(document.getElementById("buyin-input").value) || null)
+            : null,
           start_hole: startHole,
           yardage: sliceForSelection(courseScorecard && courseScorecard.yardage),
           handicap: sliceForSelection(courseScorecard && courseScorecard.handicap),
@@ -2595,6 +2630,28 @@ async function viewAdmin(tournamentId) {
           <div id="handicap-status" class="text-xs mt-2"></div>
         </div>
 
+        ${formatOf(tournament).metric === "skins" ? `
+          <div class="flex items-center gap-3 mt-6 mb-2.5">
+            <h2 class="eyebrow">Skins pot</h2>
+            <span class="flex-1 hairline"></span>
+          </div>
+          <div class="card p-5 mb-4">
+            <label class="field-label">Buy-in per player</label>
+            <div class="flex gap-2 mb-2">
+              <input id="buyin-edit" type="number" min="0" max="10000" step="1" inputmode="decimal"
+                     class="flex-1" placeholder="e.g. 20"
+                     value="${tournament.skins_buy_in != null ? Number(tournament.skins_buy_in) : ""}" />
+              <button id="save-buyin" class="btn-secondary shrink-0">Save</button>
+            </div>
+            <p class="text-xs muted">
+              ${totalPlayers} player${totalPlayers === 1 ? "" : "s"} entered
+              ${tournament.skins_buy_in ? `· pot is ${money(Number(tournament.skins_buy_in) * totalPlayers)}` : ""}.
+              The whole pot splits between the skins actually won, so carried holes make the rest worth more.
+            </p>
+            <div id="buyin-status" class="text-xs mt-2"></div>
+          </div>
+        ` : ""}
+
         <div class="flex items-center gap-3 mt-6 mb-2.5">
           <h2 class="eyebrow">Settings</h2>
           <span class="flex-1 hairline"></span>
@@ -2686,6 +2743,32 @@ async function viewAdmin(tournamentId) {
         toast("Tournament deleted");
         location.hash = "#/";
       });
+
+      const saveBuyin = document.getElementById("save-buyin");
+      if (saveBuyin) {
+        saveBuyin.addEventListener("click", async () => {
+          const raw = document.getElementById("buyin-edit").value.trim();
+          const statusEl = document.getElementById("buyin-status");
+          const value = raw === "" ? null : parseFloat(raw);
+          if (value != null && (isNaN(value) || value < 0)) {
+            statusEl.className = "text-xs mt-2 status-err";
+            statusEl.textContent = "Enter an amount, or leave blank to play for pride.";
+            return;
+          }
+          saveBuyin.disabled = true;
+          const { error } = await sb.from("tournaments")
+            .update({ skins_buy_in: value }).eq("id", tournament.id);
+          saveBuyin.disabled = false;
+          if (error) {
+            statusEl.className = "text-xs mt-2 status-err";
+            statusEl.textContent = "Couldn't save: " + error.message;
+            return;
+          }
+          tournament.skins_buy_in = value;
+          toast(value ? `Buy-in set to ${money(value)}` : "Playing for pride");
+          render();
+        });
+      }
 
       const startHoleSelect = document.getElementById("start-hole-select");
       if (startHoleSelect) {
@@ -3510,6 +3593,7 @@ async function viewLeaderboard(tournamentId) {
     const rows = buildLeaderboard(tournament, teams);
     const fmt = formatOf(tournament);
     const isLive = tournament.status === "active";
+    const pot = fmt.metric === "skins" ? skinsPayout(tournament, rows) : null;
 
     app.innerHTML = `
       <section class="panel-dark px-5 pt-5 pb-5 mb-2.5">
@@ -3523,6 +3607,33 @@ async function viewLeaderboard(tournamentId) {
           ${!isLive ? `<span class="pill on-dark">Closed</span>` : ""}
         </div>
       </section>
+
+      ${pot && pot.buyIn > 0 ? `
+        <div class="card p-4 mb-2.5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="eyebrow">Skins pot</span>
+            <span class="eyebrow">${money(pot.buyIn)} × ${pot.entrants} player${pot.entrants === 1 ? "" : "s"}</span>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <div class="num-display" style="font-size:1.7rem">${money(pot.pot)}</div>
+              <div class="eyebrow mt-1">In the pot</div>
+            </div>
+            <div>
+              <div class="num-display" style="font-size:1.7rem">${pot.skinsWon}</div>
+              <div class="eyebrow mt-1">Skins won</div>
+            </div>
+            <div>
+              <div class="num-display" style="font-size:1.7rem;color:var(--grass-700)">
+                ${pot.skinsWon ? money(pot.perSkin) : "—"}
+              </div>
+              <div class="eyebrow mt-1">Per skin</div>
+            </div>
+          </div>
+          ${!pot.skinsWon ? `
+            <p class="text-xs muted-2 mt-3">Every hole has been halved so far — nothing paid out yet, and the pot keeps carrying.</p>
+          ` : ""}
+        </div>` : ""}
 
       <div class="card overflow-hidden">
         <div class="lb-head">
@@ -3553,7 +3664,10 @@ async function viewLeaderboard(tournamentId) {
             <span class="text-right">
               ${!r.thru ? `<span class="muted-2">—</span>`
                 : fmt.metric === "points" ? `<span class="num-display" style="font-size:1.65rem">${r.points}</span>`
-                : fmt.metric === "skins" ? `<span class="num-display" style="font-size:1.65rem;color:${r.skins ? "var(--grass-700)" : "var(--ink-3)"}">${r.skins}</span>`
+                : fmt.metric === "skins" ? `
+                    <span class="num-display" style="font-size:1.65rem;color:${r.skins ? "var(--grass-700)" : "var(--ink-3)"}">${r.skins}</span>
+                    ${pot && pot.perSkin && r.skins
+                      ? `<span class="eyebrow block" style="color:var(--grass-700)">${money(r.skins * pot.perSkin)}</span>` : ""}`
                 : `<span class="to-par ${toParClass(r.toPar)}" style="font-size:1.65rem">${toParLabel(r.toPar)}</span>`}
             </span>
             <span class="text-right num-display muted" style="font-size:1.15rem">
@@ -3568,7 +3682,9 @@ async function viewLeaderboard(tournamentId) {
       </div>
       <p class="text-center text-xs muted-2 mt-2">
         ${fmt.metric === "points" ? "Most points wins"
-          : fmt.metric === "skins" ? "Outright low score wins the skin — ties carry over"
+          : fmt.metric === "skins" ? (pot && pot.buyIn > 0
+              ? "Outright low wins the skin — ties carry, and the pot splits between skins won"
+              : "Outright low score wins the skin — ties carry over")
           : `<span class="to-par under font-bold">−</span> under par`}
         &nbsp;·&nbsp; tap a row for the full card
       </p>

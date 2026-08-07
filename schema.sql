@@ -434,3 +434,12 @@ create unique index scores_member_hole
 -- the tournament's format, so a client can't write a per-player score into a
 -- scramble or a team score into a stroke-play event. organizer_set_handicap
 -- sets a player's handicap index. (Bodies applied via migration; see git.)
+
+-- Skins money. Each player antes skins_buy_in; the whole pot is split between
+-- the skins actually WON, not the holes played. A halved hole carries over, so
+-- dividing by skins won rolls that money into the skins that were won rather
+-- than leaving it stranded. Null or 0 means playing for pride.
+alter table tournaments add column if not exists skins_buy_in numeric(8,2);
+alter table tournaments drop constraint if exists tournaments_buyin_check;
+alter table tournaments add constraint tournaments_buyin_check
+  check (skins_buy_in is null or (skins_buy_in >= 0 and skins_buy_in <= 10000));
