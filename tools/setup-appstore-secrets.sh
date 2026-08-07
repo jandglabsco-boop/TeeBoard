@@ -40,6 +40,15 @@ fi
 P8="${P8/#\~/$HOME}"
 [ -f "$P8" ] || die "No such file: $P8"
 
+# Confirm it really is a private key before it goes anywhere. Copying via the
+# clipboard fails silently when the file path is wrong, which puts whatever
+# was already on the clipboard into the secret instead.
+grep -q 'BEGIN PRIVATE KEY' "$P8" \
+  || die "$P8 has no PEM header - that is not an App Store Connect key."
+openssl pkey -in "$P8" -noout 2>/dev/null \
+  || die "$P8 is not a readable private key (truncated or corrupt?)."
+ok "key file is a valid private key ($(wc -c < "$P8" | tr -d ' ') bytes)"
+
 KEY_ID="$(basename "$P8" .p8)"; KEY_ID="${KEY_ID#AuthKey_}"
 [[ "$KEY_ID" =~ ^[A-Z0-9]{8,12}$ ]] || {
   echo "Couldn't read a Key ID from the filename ($(basename "$P8"))."
