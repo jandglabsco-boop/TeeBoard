@@ -85,6 +85,15 @@ jobs:
           # The filename must follow AuthKey_<KEYID>.p8 for xcodebuild to find it.
           KEY_FILE=~/private_keys/AuthKey_$KEY_ID.p8
 
+          # Shape of the secret only - no key material. A real .p8 is ~240
+          # bytes of PEM, or ~330 chars once base64'd; anything much shorter
+          # means the wrong value landed in the box.
+          echo "Secret length: $(printf '%s' "$KEY_P8" | wc -c | tr -d ' ') bytes, $(printf '%s' "$KEY_P8" | wc -l | tr -d ' ') newlines"
+          printf '%s' "$KEY_P8" | grep -q 'BEGIN'   && echo "contains BEGIN: yes"   || echo "contains BEGIN: no"
+          printf '%s' "$KEY_P8" | grep -q 'PRIVATE' && echo "contains PRIVATE: yes" || echo "contains PRIVATE: no"
+          BAD=$(printf '%s' "$KEY_P8" | tr -d '[:space:]' | tr -d 'A-Za-z0-9+/=' | wc -c | tr -d ' ')
+          echo "chars outside the base64 alphabet: $BAD"
+
           # Accept the secret either way: pasted straight out of the .p8 (so it
           # still has the PEM header) or base64-encoded. Both are reasonable
           # things to have put in the box, and a wrong guess here fails with an
@@ -212,9 +221,20 @@ jobs:
 
       # A debug APK needs no certificates and installs straight onto any
       # Android phone, so there's something testable from the first run.
+      # Retried because the Gradle distribution download resets often enough
+      # on hosted runners to fail an otherwise-fine build.
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew assembleDebug --no-daemon; then
+              exit 0
+            fi
+            echo "::warning::Gradle attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
+          echo "::error::Gradle failed three times - this is a real build failure, not a flake."
+          exit 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
