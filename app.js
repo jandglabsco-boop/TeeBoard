@@ -9,6 +9,18 @@ const CFG = window.TEEBOARD_CONFIG || {};
 const CONFIGURED = CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes("YOUR_SUPABASE_URL_HERE");
 const sb = CONFIGURED ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
 
+// True only inside the Capacitor iOS/Android wrapper. Apple requires digital
+// subscriptions consumed in an app to go through In-App Purchase, so the
+// native build ships with no purchasing, no pricing and no links out to buy —
+// organizers subscribe on the web and simply sign in here. Players are
+// unaffected: they never pay.
+const IS_NATIVE_APP = !!(
+  typeof window !== "undefined" &&
+  window.Capacitor &&
+  typeof window.Capacitor.isNativePlatform === "function" &&
+  window.Capacitor.isNativePlatform()
+);
+
 const app = document.getElementById("app");
 const headerSub = document.getElementById("header-sub");
 
@@ -770,7 +782,7 @@ async function renderHeaderProfile() {
         <div class="eyebrow mb-1">Signed in as</div>
         ${fullName ? `<div class="text-sm font-bold">${escapeHtml(fullName)}</div>` : ""}
         <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
-        <a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>
+        ${IS_NATIVE_APP ? "" : `<a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>`}
         <a href="#/stats" class="btn-secondary w-full text-sm mb-2">Site traffic</a>
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
@@ -1096,7 +1108,7 @@ async function viewHome() {
       </a>
     </div>
 
-    ${!user ? marketingHtml() : ""}
+    ${!user && !IS_NATIVE_APP ? marketingHtml() : ""}
 
     ${teamEntries.length ? `
       <div class="flex items-center gap-3 mt-7 mb-2.5">
@@ -1185,6 +1197,7 @@ function trialDaysLeft(b) {
 // Shown while on trial so the deadline isn't a surprise. Hidden for exempt
 // accounts and anyone already subscribed.
 function trialBannerHtml(b) {
+  if (IS_NATIVE_APP) return "";
   if (!b || b.is_exempt) return "";
   if (["active", "trialing"].includes(b.subscription_status)) return "";
   const days = trialDaysLeft(b);
@@ -1257,6 +1270,29 @@ async function openBillingPortal(btn) {
 // Blocks the create/admin screens once trial and subscription are both gone.
 function renderPaywall(billing, context) {
   const ended = billing ? new Date(billing.trial_ends_at).toLocaleDateString() : "";
+
+  // Native build: state the fact, offer no purchase and no link out. Scoring
+  // and leaderboards keep working for players regardless.
+  if (IS_NATIVE_APP) {
+    app.innerHTML = `
+      <section class="panel-dark px-5 pt-6 pb-6 mb-3">
+        <div class="eyebrow on-dark mb-2">Organizer tools unavailable</div>
+        <h1 class="display" style="font-size:2rem;color:#fff">This account isn't active</h1>
+        <p class="mt-3 text-[15px]" style="color:rgba(255,255,255,.6)">
+          ${context === "admin"
+            ? "Managing tournaments needs an active organizer plan."
+            : "Creating tournaments needs an active organizer plan."}
+        </p>
+      </section>
+      <div class="card p-5">
+        <p class="text-sm muted">
+          Rounds already running are unaffected — players keep scoring and leaderboards stay live.
+          You can still open and delete your existing tournaments.
+        </p>
+      </div>
+      <a href="#/" class="btn-secondary w-full mt-3">Back to TeeBoard</a>`;
+    return;
+  }
   app.innerHTML = `
     <section class="panel-dark px-5 pt-6 pb-6 mb-3">
       <div class="eyebrow on-dark mb-2">Subscription needed</div>
@@ -1603,6 +1639,7 @@ function viewLegal(which) {
 
 // #/billing — subscribe, or manage an existing subscription.
 async function viewBilling() {
+  if (IS_NATIVE_APP) return viewHome();
   app.innerHTML = loadingHtml();
   const user = await getUser();
   if (!user) return renderAuthGate();
@@ -1873,7 +1910,7 @@ function renderAuthGate() {
         <h1 class="text-2xl">${mode === "signup" ? "Start your 30-day free trial" : "Welcome back"}</h1>
       </div>
 
-      ${mode === "signup" ? `
+      ${mode === "signup" && !IS_NATIVE_APP ? `
         <section class="panel-dark px-5 pt-5 pb-5 mb-3">
           <div class="flex items-baseline gap-2">
             <span class="num-display" style="font-size:2.4rem;color:var(--grass-400)">30</span>
