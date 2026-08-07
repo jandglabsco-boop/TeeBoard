@@ -398,3 +398,39 @@ drop policy if exists "public insert team_members" on team_members;
 drop policy if exists "public delete team_members" on team_members;
 drop policy if exists "public insert scores"       on scores;
 drop policy if exists "public update scores"       on scores;
+
+-- =====================================================================
+-- GAME FORMATS
+--
+-- TeeBoard began as scramble-only: one score per team per hole. Stroke play,
+-- Stableford, Best Ball and Skins all need a score per PLAYER per hole, so
+-- scores gains an optional team_member_id. NULL means a team score (scramble,
+-- alternate shot) — every pre-existing row stays NULL and keeps working.
+-- =====================================================================
+
+alter table tournaments add column if not exists format text not null default 'scramble';
+alter table tournaments drop constraint if exists tournaments_format_check;
+alter table tournaments add constraint tournaments_format_check check (
+  format in ('scramble','alt_shot','stroke','stableford','best_ball','skins')
+);
+
+-- Per-player handicap index, for net scoring.
+alter table team_members add column if not exists handicap numeric(4,1);
+
+alter table scores add column if not exists team_member_id uuid
+  references team_members(id) on delete cascade;
+
+-- unique(team_id, hole_number) would stop four players scoring the same hole,
+-- so it becomes two partial indexes: one per team score, one per player score.
+alter table scores drop constraint if exists scores_team_id_hole_number_key;
+drop index if exists scores_team_hole_team_score;
+drop index if exists scores_member_hole;
+create unique index scores_team_hole_team_score
+  on scores (team_id, hole_number) where team_member_id is null;
+create unique index scores_member_hole
+  on scores (team_member_id, hole_number) where team_member_id is not null;
+
+-- player_set_score gains an optional p_member_id and decides what's valid from
+-- the tournament's format, so a client can't write a per-player score into a
+-- scramble or a team score into a stroke-play event. organizer_set_handicap
+-- sets a player's handicap index. (Bodies applied via migration; see git.)

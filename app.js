@@ -187,6 +187,79 @@ function scorecardGridHtml(par, scoreMap, startHole = 1, yardage = null, handica
   return blocks.join(`<div style="height:1px;background:var(--line-2)"></div>`);
 }
 
+// ---------- formats ----------
+// scoring: "team"   = one score per team per hole (one ball in play)
+//          "player" = every player records their own ball
+// ranks:   what a row on the leaderboard represents
+// metric:  "toPar" (lowest wins) | "points" (highest wins) | "skins" (highest wins)
+const FORMATS = {
+  scramble: {
+    label: "Scramble", scoring: "team", ranks: "team", metric: "toPar",
+    blurb: "Everyone tees off, you play the best ball, and repeat. One score per team.",
+  },
+  alt_shot: {
+    label: "Alternate Shot", scoring: "team", ranks: "team", metric: "toPar",
+    blurb: "Foursomes. One ball per team, players alternate shots until it's holed.",
+  },
+  best_ball: {
+    label: "Best Ball", scoring: "player", ranks: "team", metric: "toPar",
+    blurb: "Everyone plays their own ball. The team counts the lowest score on each hole.",
+  },
+  stroke: {
+    label: "Stroke Play", scoring: "player", ranks: "player", metric: "toPar",
+    blurb: "Individual. Count every shot; lowest total wins.",
+  },
+  stableford: {
+    label: "Stableford", scoring: "player", ranks: "player", metric: "points",
+    blurb: "Individual. Points per hole against par — a bad hole costs you little.",
+  },
+  skins: {
+    label: "Skins", scoring: "player", ranks: "player", metric: "skins",
+    blurb: "Each hole is a skin. Lowest score wins it outright; ties carry it to the next hole.",
+  },
+};
+
+function formatOf(tournament) {
+  return FORMATS[tournament?.format] || FORMATS.scramble;
+}
+const isPlayerScored = (t) => formatOf(t).scoring === "player";
+
+// Strokes a player receives on a given hole.
+//
+// Holes are ranked by their stroke index (1 = hardest), then shots are spread
+// evenly: everyone gets floor(HC / holes) on every hole, and the hardest
+// (HC mod holes) holes get one more. A 9-hole round uses half the handicap,
+// which is the usual convention.
+function strokeAllocation(tournament, handicap) {
+  const n = tournament.num_holes;
+  const alloc = Array(n).fill(0);
+  if (!handicap || handicap <= 0) return alloc;
+
+  const playing = Math.round(n === 9 ? handicap / 2 : handicap);
+  if (playing <= 0) return alloc;
+
+  const si = tournament.handicap && tournament.handicap.length === n
+    ? tournament.handicap
+    : Array.from({ length: n }, (_, i) => i + 1);
+
+  // rank[holeIndex] = 1 for the hardest hole played, 2 for the next, ...
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => si[a] - si[b]);
+  const rank = Array(n);
+  order.forEach((holeIdx, position) => { rank[holeIdx] = position + 1; });
+
+  const base = Math.floor(playing / n);
+  const extra = playing % n;
+  for (let i = 0; i < n; i++) alloc[i] = base + (rank[i] <= extra ? 1 : 0);
+  return alloc;
+}
+
+// Stableford: 2 points for a net par, one more per shot better, one fewer per
+// shot worse, never below zero.
+function stablefordPoints(netStrokes, par) {
+  if (netStrokes == null) return 0;
+  return Math.max(0, 2 + (par - netStrokes));
+}
+
 function tournamentPar(tournament) {
   return tournament.par && tournament.par.length === tournament.num_holes
     ? tournament.par
@@ -198,62 +271,162 @@ function tournamentPar(tournament) {
 // disagree about who actually won.
 function buildLeaderboard(tournament, teams) {
   const par = tournamentPar(tournament);
+  const n = tournament.num_holes;
+  const fmt = formatOf(tournament);
+  const perPlayer = fmt.scoring === "player";
 
-  // Stroke index per hole (1 = hardest), used only to break ties once a team
-  // has finished every hole — a "scorecard playoff" countback. Falls back to
-  // hole order if the organizer hasn't set real handicaps for this course.
-  const handicap = tournament.handicap && tournament.handicap.length === tournament.num_holes
+  // Stroke index per hole (1 = hardest). Drives both the countback tiebreak
+  // and, for net formats, which holes a handicap gives shots on.
+  const si = tournament.handicap && tournament.handicap.length === n
     ? tournament.handicap
-    : Array.from({ length: tournament.num_holes }, (_, i) => i + 1);
-  const countbackOrder = Array.from({ length: tournament.num_holes }, (_, i) => i + 1)
-    .sort((a, b) => handicap[a - 1] - handicap[b - 1]);
+    : Array.from({ length: n }, (_, i) => i + 1);
+  const countbackOrder = Array.from({ length: n }, (_, i) => i + 1)
+    .sort((a, b) => si[a - 1] - si[b - 1]);
 
+  // ---- gather raw scores into competitors ----
+  // A competitor is a team or a player depending on the format, but from here
+  // down everything works the same way.
+  const competitors = [];
+
+  (teams || []).forEach((t) => {
+    const members = t.team_members || [];
+    const teamScores = (t.scores || []);
+
+    if (!perPlayer) {
+      const scoreMap = {};
+      teamScores.forEach((s) => { if (s.team_member_id == null) scoreMap[s.hole_number] = s.strokes; });
+      competitors.push({
+        id: t.id, teamId: t.id, name: t.name,
+        players: members.map((m) => m.player_name),
+        scoreMap, alloc: Array(n).fill(0),
+        signed: !!t.signed_at,
+      });
+      return;
+    }
+
+    // Per-player formats: one competitor per player, each with their own ball.
+    members.forEach((m) => {
+      const scoreMap = {};
+      teamScores.forEach((s) => { if (s.team_member_id === m.id) scoreMap[s.hole_number] = s.strokes; });
+      competitors.push({
+        id: m.id, teamId: t.id, memberId: m.id,
+        name: m.player_name, teamName: t.name,
+        players: [],
+        handicap: m.handicap,
+        alloc: strokeAllocation(tournament, m.handicap),
+        scoreMap,
+        signed: !!t.signed_at,
+      });
+    });
+  });
+
+  // ---- per-competitor totals ----
+  competitors.forEach((c) => {
+    let strokes = 0, parSum = 0, thru = 0, points = 0, netStrokes = 0;
+    for (let h = 1; h <= n; h++) {
+      const gross = c.scoreMap[h];
+      if (gross == null) continue;
+      const holePar = par[h - 1] ?? 4;
+      const net = gross - (c.alloc[h - 1] || 0);
+      strokes += gross;
+      netStrokes += net;
+      parSum += holePar;
+      points += stablefordPoints(net, holePar);
+      thru++;
+    }
+    c.strokes = strokes;
+    c.netStrokes = netStrokes;
+    c.thru = thru;
+    c.toPar = netStrokes - parSum;      // net where handicaps are set, gross otherwise
+    c.grossToPar = strokes - parSum;
+    c.points = points;
+    c.skins = 0;
+  });
+
+  // ---- Best Ball: collapse each team's players into one team row ----
+  let rows = competitors;
+  if (fmt.ranks === "team" && perPlayer) {
+    const byTeam = new Map();
+    competitors.forEach((c) => {
+      if (!byTeam.has(c.teamId)) {
+        byTeam.set(c.teamId, {
+          id: c.teamId, teamId: c.teamId, name: c.teamName,
+          players: [], scoreMap: {}, alloc: Array(n).fill(0),
+          signed: c.signed, members: [],
+        });
+      }
+      const row = byTeam.get(c.teamId);
+      row.players.push(c.name);
+      row.members.push(c);
+    });
+    byTeam.forEach((row) => {
+      // The team's score on a hole is its best player's net score there.
+      for (let h = 1; h <= n; h++) {
+        let best = null;
+        row.members.forEach((m) => {
+          const gross = m.scoreMap[h];
+          if (gross == null) return;
+          const net = gross - (m.alloc[h - 1] || 0);
+          if (best == null || net < best) best = net;
+        });
+        if (best != null) row.scoreMap[h] = best;
+      }
+      let strokes = 0, parSum = 0, thru = 0, points = 0;
+      for (let h = 1; h <= n; h++) {
+        if (row.scoreMap[h] == null) continue;
+        strokes += row.scoreMap[h];
+        parSum += par[h - 1] ?? 4;
+        points += stablefordPoints(row.scoreMap[h], par[h - 1] ?? 4);
+        thru++;
+      }
+      row.strokes = strokes; row.netStrokes = strokes; row.thru = thru;
+      row.toPar = strokes - parSum; row.grossToPar = row.toPar;
+      row.points = points; row.skins = 0;
+    });
+    rows = [...byTeam.values()];
+  }
+
+  // ---- Skins: lowest net score on a hole wins it outright; ties carry over ----
+  if (fmt.metric === "skins") {
+    let carry = 0;
+    for (let h = 1; h <= n; h++) {
+      const played = rows.filter((r) => r.scoreMap[h] != null);
+      carry += 1;
+      if (!played.length) continue;
+      const nets = played.map((r) => ({ r, net: r.scoreMap[h] - (r.alloc[h - 1] || 0) }));
+      const low = Math.min(...nets.map((x) => x.net));
+      const winners = nets.filter((x) => x.net === low);
+      // Only an outright low takes the skin; otherwise it rolls to the next hole.
+      if (winners.length === 1) { winners[0].r.skins += carry; carry = 0; }
+    }
+  }
+
+  // ---- ordering ----
   function countbackKey(row) {
     let cum = 0;
     return countbackOrder.map((h) => (cum += row.scoreMap[h] ?? 0));
   }
 
-  // Full ordering: unstarted teams last, then by score-to-par, then (once
-  // both teams have finished every hole) by countback on the hardest holes
-  // first. Returns 0 only when two teams are genuinely inseparable — that's
-  // when the leaderboard shows them tied with a "T".
+  // Unstarted last; then the format's own metric; then a scorecard playoff on
+  // the hardest holes once both have completed the round.
   function compareRows(a, b) {
     if ((a.thru === 0) !== (b.thru === 0)) return a.thru === 0 ? 1 : -1;
-    if (a.toPar !== b.toPar) return a.toPar - b.toPar;
-    if (a.thru === tournament.num_holes && b.thru === tournament.num_holes) {
+
+    if (fmt.metric === "points" && a.points !== b.points) return b.points - a.points;
+    if (fmt.metric === "skins" && a.skins !== b.skins) return b.skins - a.skins;
+    if (fmt.metric === "toPar" && a.toPar !== b.toPar) return a.toPar - b.toPar;
+
+    if (a.thru === n && b.thru === n) {
       const ak = countbackKey(a), bk = countbackKey(b);
-      for (let i = 0; i < ak.length; i++) {
-        if (ak[i] !== bk[i]) return ak[i] - bk[i];
-      }
+      for (let i = 0; i < ak.length; i++) if (ak[i] !== bk[i]) return ak[i] - bk[i];
     }
     return b.thru - a.thru;
   }
 
-  const rows = (teams || []).map((t) => {
-    let strokes = 0, parSum = 0, thru = 0;
-    const scoreMap = {};
-    (t.scores || []).forEach((s) => {
-      strokes += s.strokes;
-      parSum += par[s.hole_number - 1] ?? 4;
-      scoreMap[s.hole_number] = s.strokes;
-      thru++;
-    });
-    return {
-      id: t.id,
-      name: t.name,
-      players: (t.team_members || []).map((m) => m.player_name),
-      strokes, thru,
-      scoreMap,
-      toPar: strokes - parSum,
-      signed: !!t.signed_at,
-    };
-  });
-
   rows.sort(compareRows);
 
-  // Places skip after ties (1, 2, 2, 4 …). The countback above already
-  // resolves most ties into a real order; "T" only shows when two or more
-  // teams are still fully identical after it.
+  // Places skip after ties (1, 2, 2, 4 ...). "T" shows only when two rows are
+  // still genuinely inseparable after the countback.
   let place = 0;
   rows.forEach((r, i) => {
     const prev = rows[i - 1];
@@ -1886,6 +2059,14 @@ function renderCreateForm(user, billing) {
         <p id="course-selected-note" class="hidden text-xs font-semibold mt-2 p-2 rounded-lg" style="color:var(--grass-700);background:var(--grass-100)"></p>
       </div>
       <div>
+        <label class="field-label">Format</label>
+        <select id="format-select" name="format">
+          ${Object.entries(FORMATS).map(([k, f]) =>
+            `<option value="${k}">${f.label}</option>`).join("")}
+        </select>
+        <p id="format-blurb" class="text-xs muted-2 mt-1.5 leading-relaxed"></p>
+      </div>
+      <div>
         <label class="field-label">Holes</label>
         <select id="holes-select" name="holes">
           <option value="18">18 holes</option>
@@ -1902,6 +2083,17 @@ function renderCreateForm(user, billing) {
       <button class="btn-primary w-full" type="submit">Create &amp; get code</button>
     </form>
   `;
+
+  const formatSelect = document.getElementById("format-select");
+  const formatBlurb = document.getElementById("format-blurb");
+  const refreshFormatBlurb = () => {
+    const f = FORMATS[formatSelect.value];
+    formatBlurb.textContent = f
+      ? `${f.blurb}${f.scoring === "player" ? " Every player records their own score." : ""}`
+      : "";
+  };
+  formatSelect.addEventListener("change", refreshFormatBlurb);
+  refreshFormatBlurb();
 
   const courseInput = document.getElementById("course-input");
   const resultsBox = document.getElementById("course-results");
@@ -2145,6 +2337,7 @@ function renderCreateForm(user, billing) {
         .from("tournaments")
         .insert({
           name, course_name: course || null, join_code: code, num_holes: numHoles, par,
+          format: formatSelect.value,
           start_hole: startHole,
           yardage: sliceForSelection(courseScorecard && courseScorecard.yardage),
           handicap: sliceForSelection(courseScorecard && courseScorecard.handicap),
@@ -2206,7 +2399,7 @@ async function viewAdmin(tournamentId) {
   async function render() {
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, join_code, signed_at, signed_by, team_members(id, player_name), scores(hole_number)")
+      .select("id, name, join_code, signed_at, signed_by, team_members(id, player_name, handicap), scores(hole_number, team_member_id)")
       .eq("tournament_id", tournamentId)
       .order("created_at", { ascending: true });
 
@@ -2459,7 +2652,7 @@ async function viewAdmin(tournamentId) {
         if (document.fonts && document.fonts.ready) await document.fonts.ready;
         const { data: full } = await sb
           .from("teams")
-          .select("id, name, signed_at, team_members(player_name), scores(hole_number, strokes)")
+          .select("id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
           .eq("tournament_id", tournamentId);
         const ranked = buildLeaderboard(tournament, full).filter((r) => r.thru > 0);
         if (!ranked.length) {
@@ -3006,10 +3199,37 @@ async function viewTeam(teamId) {
   let mode = "score";
 
   async function render() {
-    const { data: members } = await sb.from("team_members").select("player_name").eq("team_id", teamId);
-    const { data: scores } = await sb.from("scores").select("hole_number, strokes").eq("team_id", teamId);
+    const { data: members } = await sb.from("team_members").select("id, player_name, handicap").eq("team_id", teamId);
+    const { data: scores } = await sb.from("scores").select("hole_number, strokes, team_member_id").eq("team_id", teamId);
+    const perPlayer = isPlayerScored(tournament);
+    const roster = members || [];
+
+    // Team formats use the rows with no player attached; per-player formats
+    // keep one map per member.
     const scoreMap = {};
-    (scores || []).forEach((s) => (scoreMap[s.hole_number] = s.strokes));
+    (scores || []).forEach((s) => {
+      if (s.team_member_id == null) scoreMap[s.hole_number] = s.strokes;
+    });
+    const byMember = {};
+    roster.forEach((m) => {
+      byMember[m.id] = {};
+      (scores || []).forEach((s) => {
+        if (s.team_member_id === m.id) byMember[m.id][s.hole_number] = s.strokes;
+      });
+    });
+
+    // In per-player formats the team header shows the best ball on each hole,
+    // which is the number that actually matters to the team.
+    if (perPlayer) {
+      for (let h = 1; h <= tournament.num_holes; h++) {
+        let best = null;
+        roster.forEach((m) => {
+          const v = byMember[m.id][h];
+          if (v != null && (best == null || v < best)) best = v;
+        });
+        if (best != null) scoreMap[h] = best;
+      }
+    }
 
     let totalStrokes = 0, totalPar = 0, thru = 0;
     for (let h = 1; h <= tournament.num_holes; h++) {
@@ -3098,6 +3318,45 @@ async function viewTeam(teamId) {
       }
       const val = scoreMap[h] ?? "";
       const entered = scoreMap[h] != null;
+
+      if (perPlayer) {
+        // One row per player: everyone records their own ball.
+        holesHtml += `
+          <div class="card px-3 py-2.5">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="num-display" style="font-size:1.4rem;min-width:1.6rem">${holeLabel(tournament, h)}</span>
+              <span class="eyebrow">Par ${par[h - 1]}</span>
+              ${tournament.yardage?.[h - 1] ? `<span class="eyebrow">${tournament.yardage[h - 1]} yds</span>` : ""}
+            </div>
+            <div class="flex flex-col gap-1.5">
+              ${roster.map((m) => {
+                const pv = byMember[m.id][h] ?? "";
+                return `
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm truncate ${pv === "" ? "muted-2" : ""}">${escapeHtml(m.player_name)}</span>
+                  ${isSigned ? `
+                    <span class="hole-mark hole-mark-sm ${holeMarkClass(byMember[m.id][h], par[h - 1])}">${pv || "—"}</span>
+                  ` : `
+                    <span class="flex items-center gap-1 shrink-0">
+                      <button data-hole="${h}" data-member="${m.id}" data-delta="-1" class="step-btn"
+                              style="width:2.1rem;height:2.1rem;font-size:1.1rem"
+                              aria-label="One less for ${escapeHtml(m.player_name)} on hole ${holeLabel(tournament, h)}">−</button>
+                      <input data-hole="${h}" data-member="${m.id}" type="number" inputmode="numeric" min="1" max="15"
+                             value="${pv}" class="step-value" style="width:2.6rem;height:2.1rem;font-size:1.15rem"
+                             aria-label="Strokes for ${escapeHtml(m.player_name)} on hole ${holeLabel(tournament, h)}" placeholder="–" />
+                      <button data-hole="${h}" data-member="${m.id}" data-delta="1" class="step-btn"
+                              style="width:2.1rem;height:2.1rem;font-size:1.1rem"
+                              aria-label="One more for ${escapeHtml(m.player_name)} on hole ${holeLabel(tournament, h)}">+</button>
+                    </span>
+                  `}
+                </div>`;
+              }).join("")}
+              ${roster.length === 0 ? `<p class="text-xs muted-2">No players on this team yet — add them from the join screen or ask your organizer.</p>` : ""}
+            </div>
+          </div>`;
+        continue;
+      }
+
       holesHtml += `
         <div class="card flex items-center justify-between pl-3 pr-2.5 py-2"
              style="${entered ? "" : "background:#FCFDFC;"}">
@@ -3122,7 +3381,7 @@ async function viewTeam(teamId) {
       <section class="panel-dark px-5 pt-5 pb-4 mb-3">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <div class="eyebrow on-dark mb-1">${escapeHtml(tournament.name)}</div>
+            <div class="eyebrow on-dark mb-1">${escapeHtml(tournament.name)} · ${escapeHtml(formatOf(tournament).label)}</div>
             <h1 class="display truncate" style="font-size:1.9rem;color:#fff">${escapeHtml(team.name)}</h1>
           </div>
           <span class="pill on-dark shrink-0">${escapeHtml(team.join_code)}</span>
@@ -3181,11 +3440,13 @@ async function viewTeam(teamId) {
         btn.addEventListener("click", async () => {
           const hole = parseInt(btn.dataset.hole, 10);
           const delta = parseInt(btn.dataset.delta, 10);
-          const input = app.querySelector(`input[data-hole="${hole}"]`);
+          const member = btn.dataset.member || null;
+          const input = app.querySelector(
+            member ? `input[data-hole="${hole}"][data-member="${member}"]` : `input[data-hole="${hole}"]:not([data-member])`);
           let current = parseInt(input.value, 10) || par[hole - 1];
           current = Math.max(1, current + delta);
           input.value = current;
-          await saveScore(hole, current);
+          await saveScore(hole, current, member);
         });
       });
       app.querySelectorAll('input[data-hole]').forEach((input) => {
@@ -3193,7 +3454,7 @@ async function viewTeam(teamId) {
           const hole = parseInt(input.dataset.hole, 10);
           const val = parseInt(input.value, 10);
           if (!val || val < 1) return;
-          await saveScore(hole, val);
+          await saveScore(hole, val, input.dataset.member || null);
         });
       });
       const reviewBtn = document.getElementById("review-sign-btn");
@@ -3203,13 +3464,14 @@ async function viewTeam(teamId) {
     }
   }
 
-  async function saveScore(hole, strokes) {
+  async function saveScore(hole, strokes, memberId) {
     // Gated on the team's own join code, so holding the public anon key is no
     // longer enough to rewrite somebody else's card.
     const { error } = await sb.rpc("player_set_score", {
       p_team_code: team.join_code,
       p_hole: hole,
       p_strokes: strokes,
+      p_member_id: memberId ?? null,
     });
     if (error) toast("Couldn't save score: " + error.message, true);
     else render();
@@ -3242,10 +3504,11 @@ async function viewLeaderboard(tournamentId) {
   async function render() {
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, signed_at, team_members(player_name), scores(hole_number, strokes)")
+      .select("id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
       .eq("tournament_id", tournamentId);
 
     const rows = buildLeaderboard(tournament, teams);
+    const fmt = formatOf(tournament);
     const isLive = tournament.status === "active";
 
     app.innerHTML = `
@@ -3254,6 +3517,7 @@ async function viewLeaderboard(tournamentId) {
         <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(tournament.name)}</h1>
         ${tournament.course_name ? `<p class="text-sm mt-2" style="color:rgba(255,255,255,.55)">${escapeHtml(tournament.course_name)}</p>` : ""}
         <div class="flex items-center gap-2 mt-4 pt-3.5" style="border-top:1px solid rgba(255,255,255,.09)">
+          <span class="pill on-dark">${escapeHtml(fmt.label)}</span>
           <span class="pill on-dark">${tournament.num_holes} holes</span>
           <span class="pill on-dark">Code ${escapeHtml(tournament.join_code)}</span>
           ${!isLive ? `<span class="pill on-dark">Closed</span>` : ""}
@@ -3263,8 +3527,8 @@ async function viewLeaderboard(tournamentId) {
       <div class="card overflow-hidden">
         <div class="lb-head">
           <span></span>
-          <span>Team</span>
-          <span class="text-right">Score</span>
+          <span>${fmt.ranks === "player" ? "Player" : "Team"}</span>
+          <span class="text-right">${fmt.metric === "points" ? "Pts" : fmt.metric === "skins" ? "Skins" : "Score"}</span>
           <span class="text-right">Thru</span>
         </div>
         ${rows.length === 0 ? `
@@ -3276,16 +3540,21 @@ async function viewLeaderboard(tournamentId) {
         ${rows.map((r) => {
           const leading = r.place === 1 && r.thru > 0;
           return `
-          <a href="#/scorecard/${r.id}" class="lb-row${leading ? " leader" : ""}">
+          <a href="#/scorecard/${r.teamId || r.id}" class="lb-row${leading ? " leader" : ""}">
             <span class="rank${leading ? " lead" : ""}${r.tied ? " tied" : ""}">${r.tied ? "T" : ""}${r.place}</span>
             <span class="min-w-0">
               <span class="font-bold block truncate">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed &amp; submitted">F</span>` : ""}</span>
-              ${r.players.length ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.players.join(" · "))}</span>` : ""}
+              ${r.players.length
+                ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.players.join(" · "))}</span>`
+                : r.teamName
+                  ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.teamName)}${r.handicap != null ? ` · hcp ${r.handicap}` : ""}</span>`
+                  : ""}
             </span>
             <span class="text-right">
-              ${r.thru
-                ? `<span class="to-par ${toParClass(r.toPar)}" style="font-size:1.65rem">${toParLabel(r.toPar)}</span>`
-                : `<span class="muted-2">—</span>`}
+              ${!r.thru ? `<span class="muted-2">—</span>`
+                : fmt.metric === "points" ? `<span class="num-display" style="font-size:1.65rem">${r.points}</span>`
+                : fmt.metric === "skins" ? `<span class="num-display" style="font-size:1.65rem;color:${r.skins ? "var(--grass-700)" : "var(--ink-3)"}">${r.skins}</span>`
+                : `<span class="to-par ${toParClass(r.toPar)}" style="font-size:1.65rem">${toParLabel(r.toPar)}</span>`}
             </span>
             <span class="text-right num-display muted" style="font-size:1.15rem">
               ${r.thru || "–"}<span class="text-xs muted-2">/${tournament.num_holes}</span>
@@ -3298,7 +3567,10 @@ async function viewLeaderboard(tournamentId) {
         <span class="eyebrow">${isLive ? "Updating live as scores come in" : "Tournament closed"}</span>
       </div>
       <p class="text-center text-xs muted-2 mt-2">
-        <span class="to-par under font-bold">−</span> under par &nbsp;·&nbsp; tap a team for their full card
+        ${fmt.metric === "points" ? "Most points wins"
+          : fmt.metric === "skins" ? "Outright low score wins the skin — ties carry over"
+          : `<span class="to-par under font-bold">−</span> under par`}
+        &nbsp;·&nbsp; tap a row for the full card
       </p>
     `;
   }
@@ -3335,7 +3607,7 @@ async function viewScorecard(teamId) {
   const par = tournament.par && tournament.par.length === tournament.num_holes ? tournament.par : Array(tournament.num_holes).fill(4);
 
   async function render() {
-    const { data: scores } = await sb.from("scores").select("hole_number, strokes").eq("team_id", teamId);
+    const { data: scores } = await sb.from("scores").select("hole_number, strokes, team_member_id").eq("team_id", teamId);
     const scoreMap = {};
     (scores || []).forEach((s) => (scoreMap[s.hole_number] = s.strokes));
 
