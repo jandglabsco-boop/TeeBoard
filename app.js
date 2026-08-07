@@ -818,6 +818,68 @@ const routes = [
   { re: /^#\/scorecard\/([0-9a-fA-F-]+)$/, view: (m) => viewScorecard(m[1]) },
 ];
 
+// ---------- offline score queue ----------
+// Golf courses have terrible signal. A score that fails to send is kept on the
+// phone and replayed when the connection returns, so a dead spot on the 7th
+// never costs someone their card.
+
+const OFFLINE_KEY = "bb_pending_scores";
+const pendingScores = () => load(OFFLINE_KEY, []);
+
+function queueScore(entry) {
+  const list = pendingScores();
+  // Only the latest value for a given hole/player matters, so replace rather
+  // than pile up — otherwise a flaky connection replays every correction.
+  const i = list.findIndex(
+    (p) => p.p_team_code === entry.p_team_code &&
+           p.p_hole === entry.p_hole &&
+           (p.p_member_id ?? null) === (entry.p_member_id ?? null));
+  if (i >= 0) list[i] = entry; else list.push(entry);
+  store(OFFLINE_KEY, list);
+  updateOfflineBadge();
+}
+
+let flushing = false;
+async function flushScoreQueue() {
+  if (flushing || !sb || !navigator.onLine) return;
+  const list = pendingScores();
+  if (!list.length) return;
+
+  flushing = true;
+  const remaining = [];
+  for (const entry of list) {
+    const { error } = await sb.rpc("player_set_score", entry);
+    // Keep only genuine connection failures. A rejection from the server
+    // (closed tournament, signed card) will never succeed on retry, so
+    // holding it would block the queue forever.
+    if (error && /fetch|network|Failed to send/i.test(error.message || "")) remaining.push(entry);
+  }
+  store(OFFLINE_KEY, remaining);
+  flushing = false;
+  updateOfflineBadge();
+
+  if (list.length !== remaining.length) {
+    toast(remaining.length ? "Some scores synced" : "Scores synced");
+    route();
+  }
+}
+
+function updateOfflineBadge() {
+  const el = document.getElementById("offline-badge");
+  if (!el) return;
+  const n = pendingScores().length;
+  const offline = !navigator.onLine;
+  if (!n && !offline) { el.innerHTML = ""; return; }
+  el.innerHTML = `<span class="pill" style="background:rgba(214,37,43,.12);border-color:rgba(214,37,43,.25);color:#FF6B6B">
+    ${offline ? "Offline" : ""}${n ? `${offline ? " · " : ""}${n} to sync` : ""}</span>`;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", flushScoreQueue);
+  window.addEventListener("online", updateOfflineBadge);
+  window.addEventListener("offline", updateOfflineBadge);
+}
+
 // ---------- page views ----------
 // Self-hosted and deliberately minimal: which screen, a random per-browser id
 // so repeat views collapse into one visitor, and the referring host. No IP, no
@@ -869,6 +931,7 @@ function trackPageView() {
 
 function route() {
   clearRealtime();
+  flushScoreQueue();
   headerSub.innerHTML = "";
   renderHeaderProfile();
   trackPageView();
@@ -897,6 +960,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   if (await handleAuthCallback()) return;
   route();
+  updateOfflineBadge();
+  flushScoreQueue();
+
+  // Service worker: makes the app installable and keeps the shell available
+  // with no signal. Skipped on file:// and anywhere it isn't supported.
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => { /* not fatal */ });
+  }
 });
 
 // Where Supabase should send someone back to after they click the link in a
@@ -3550,14 +3621,30 @@ async function viewTeam(teamId) {
   async function saveScore(hole, strokes, memberId) {
     // Gated on the team's own join code, so holding the public anon key is no
     // longer enough to rewrite somebody else's card.
-    const { error } = await sb.rpc("player_set_score", {
+    const entry = {
       p_team_code: team.join_code,
       p_hole: hole,
       p_strokes: strokes,
       p_member_id: memberId ?? null,
-    });
-    if (error) toast("Couldn't save score: " + error.message, true);
-    else render();
+    };
+
+    if (!navigator.onLine) {
+      queueScore(entry);
+      toast("Saved on your phone — will sync when you're back in range");
+      return;
+    }
+
+    const { error } = await sb.rpc("player_set_score", entry);
+    if (!error) return render();
+
+    // Distinguish "no signal" from "the server said no": only the former is
+    // worth retrying later.
+    if (/fetch|network|Failed to send/i.test(error.message || "")) {
+      queueScore(entry);
+      toast("No signal — saved on your phone and will sync later");
+    } else {
+      toast("Couldn't save score: " + error.message, true);
+    }
   }
 
   await render();

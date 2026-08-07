@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TeeBoard</string>
+    <string name="title_activity_main">TeeBoard</string>
+    <string name="package_name">com.jandglabs.teeboard</string>
+    <string name="custom_url_scheme">com.jandglabs.teeboard</string>
+</resources>

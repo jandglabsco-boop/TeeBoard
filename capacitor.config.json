@@ -1,0 +1,20 @@
+{
+  "appId": "com.jandglabs.teeboard",
+  "appName": "TeeBoard",
+  "webDir": "www",
+  "backgroundColor": "#08110C",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#08110C"
+  },
+  "android": {
+    "backgroundColor": "#08110C"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "backgroundColor": "#08110C",
+      "showSpinner": false,
+      "launchAutoHide": true
+    }
+  }
+}

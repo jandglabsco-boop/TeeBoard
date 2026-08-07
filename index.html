@@ -4,7 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <title>TeeBoard</title>
-<meta name="theme-color" content="#0A130E" />
+<meta name="theme-color" content="#08110C" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%230A130E%22/><path d=%22M38 76 L38 24 L72 33 L38 42%22 fill=%22%232FA84F%22/><rect x=%2233%22 y=%2222%22 width=%227%22 height=%2256%22 rx=%223.5%22 fill=%22%23ffffff%22/></svg>" />
@@ -568,6 +570,7 @@
         <span class="wordmark on-dark text-xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></span>
       </a>
       <div class="flex items-center gap-2.5">
+        <span id="offline-badge"></span>
         <span id="header-sub"></span>
         <div id="header-profile"></div>
       </div>
@@ -586,6 +589,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260803c"></script>
+  <script src="app.js?v=20260806a"></script>
 </body>
 </html>
