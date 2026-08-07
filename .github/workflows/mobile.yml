@@ -83,8 +83,32 @@ jobs:
         run: |
           mkdir -p ~/private_keys
           # The filename must follow AuthKey_<KEYID>.p8 for xcodebuild to find it.
-          echo "$KEY_P8" | base64 --decode > ~/private_keys/AuthKey_$KEY_ID.p8
-          chmod 600 ~/private_keys/AuthKey_$KEY_ID.p8
+          KEY_FILE=~/private_keys/AuthKey_$KEY_ID.p8
+
+          # Accept the secret either way: pasted straight out of the .p8 (so it
+          # still has the PEM header) or base64-encoded. Both are reasonable
+          # things to have put in the box, and a wrong guess here fails with an
+          # opaque "error decoding base64 input stream".
+          if printf '%s' "$KEY_P8" | grep -q 'BEGIN PRIVATE KEY'; then
+            printf '%s\n' "$KEY_P8" > "$KEY_FILE"
+            echo "Key stored as PEM."
+          else
+            # Tolerate whitespace/newlines from clipboard wrapping.
+            printf '%s' "$KEY_P8" | tr -d '[:space:]' | base64 --decode > "$KEY_FILE"
+            echo "Key decoded from base64."
+          fi
+          chmod 600 "$KEY_FILE"
+
+          # Fail here, loudly, rather than 20 minutes later inside xcodebuild.
+          if ! grep -q 'BEGIN PRIVATE KEY' "$KEY_FILE"; then
+            echo "::error::APPSTORE_API_KEY_P8 is not a valid .p8 key. Re-add it with: openssl base64 -A -in AuthKey_XXXX.p8 | pbcopy"
+            exit 1
+          fi
+          if ! openssl pkey -in "$KEY_FILE" -noout 2>/dev/null; then
+            echo "::error::APPSTORE_API_KEY_P8 decoded but is not a readable private key - it may be truncated."
+            exit 1
+          fi
+          echo "API key validated."
 
       - name: Archive with automatic signing
         if: steps.signing.outputs.ready == 'true'
