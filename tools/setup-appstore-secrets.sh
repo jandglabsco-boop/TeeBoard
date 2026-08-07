@@ -22,14 +22,26 @@ gh auth status >/dev/null 2>&1 || die "Not signed in to GitHub.  Run: gh auth lo
 # ---------------------------------------------------------------- find the key
 # Apple names the download AuthKey_<KEYID>.p8 — so the Key ID comes free.
 # (No arrays/mapfile here: macOS still ships bash 3.2.)
-FOUND="$(find "$HOME/Downloads" "$HOME/Desktop" . -maxdepth 2 -name 'AuthKey_*.p8' 2>/dev/null | sort -u)"
+# `|| true` matters: find exits non-zero after any permission-denied
+# directory, and under `set -e` that kills the script with no output at all.
+# Only add the working directory when it isn't $HOME, or this walks the
+# entire home folder.
+SEARCH="$HOME/Downloads $HOME/Desktop"
+[ "$PWD" = "$HOME" ] || SEARCH="$SEARCH $PWD"
+# shellcheck disable=SC2086
+FOUND="$(find $SEARCH -maxdepth 2 -name 'AuthKey_*.p8' 2>/dev/null | sort -u || true)"
 COUNT="$(printf '%s' "$FOUND" | grep -c . || true)"
+
+# Copies of one key in several folders are still one key - don't make anyone
+# choose between two identical files.
+UNIQ="$(printf '%s\n' "$FOUND" | xargs -n1 basename 2>/dev/null | sort -u | grep -c . || true)"
+[ "$UNIQ" -eq 1 ] && COUNT=1
 
 if [ "$COUNT" -eq 0 ]; then
   echo "No AuthKey_*.p8 found in ~/Downloads, ~/Desktop, or here."
   read -r -p "Full path to your .p8 file: " P8
 elif [ "$COUNT" -eq 1 ]; then
-  P8="$FOUND"
+  P8="$(printf '%s\n' "$FOUND" | head -1)"
 else
   echo "Found several keys:"
   printf '%s\n' "$FOUND" | nl -w3 -s') '
