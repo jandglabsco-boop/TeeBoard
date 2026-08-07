@@ -135,8 +135,11 @@ jobs:
           ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
           TEAM_ID: ${{ secrets.APPSTORE_TEAM_ID }}
         run: |
-          pip3 install --quiet --disable-pip-version-check pyjwt cryptography
-          python3 - <<'PY'
+          # The runner's Python is Homebrew-managed, so PEP 668 refuses a
+          # direct pip install. A throwaway venv sidesteps it.
+          python3 -m venv "$RUNNER_TEMP/ascvenv"
+          "$RUNNER_TEMP/ascvenv/bin/pip" install --quiet --disable-pip-version-check pyjwt cryptography
+          "$RUNNER_TEMP/ascvenv/bin/python" - <<'PY'
           import os, sys, time, json, urllib.request, urllib.error, jwt
 
           key_id, issuer, team = os.environ["KEY_ID"], os.environ["ISSUER_ID"], os.environ["TEAM_ID"]
