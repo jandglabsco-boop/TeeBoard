@@ -62,13 +62,24 @@ no Transporter step.
 - Download the `.p8` — **Apple only lets you download it once**
 - Note the **Key ID** and the **Issuer ID** shown on that page
 
-**Add the secrets** under *Settings → Secrets and variables → Actions*:
+**Add the secrets.** Easiest way — one command, from the repo root:
+
+```bash
+bash tools/setup-appstore-secrets.sh
+```
+
+It finds the `.p8` in your Downloads, reads the Key ID out of Apple's
+filename, asks for the Issuer ID and Team ID, and sets all four secrets. The
+key is piped straight from the file into GitHub — never printed, never put on
+the clipboard, never copied elsewhere on disk.
+
+Or do it by hand under *Settings → Secrets and variables → Actions*:
 
 | Secret | Where it comes from |
 |---|---|
-| `APPSTORE_API_KEY_P8` | `base64 -i AuthKey_XXXX.p8 \| pbcopy` |
+| `APPSTORE_API_KEY_P8` | `openssl base64 -A -in AuthKey_XXXX.p8 \| pbcopy` |
 | `APPSTORE_API_KEY_ID` | Key ID from that page |
-| `APPSTORE_API_ISSUER_ID` | Issuer ID from that page |
+| `APPSTORE_API_ISSUER_ID` | Issuer ID — top of the page, above the key list, not per-key |
 | `APPSTORE_TEAM_ID` | 10 characters, top right of developer.apple.com |
 
 Until those exist the workflow still passes and simply notes it built
