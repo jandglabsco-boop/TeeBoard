@@ -47,34 +47,47 @@ It always does two things with no setup at all:
 - **Android** — produces a **debug APK** you can download and install on any
   Android phone immediately
 
-To get a signed `.ipa` for the App Store, add these repository secrets under
-*Settings → Secrets and variables → Actions*:
+To get a signed build **and have it land in TestFlight automatically**, create
+one App Store Connect API key and add four repository secrets.
 
-| Secret | What it is |
+Xcode then issues and renews the certificate and provisioning profile itself.
+There is no CSR to generate, no `.p12` to export, no profile to download, and
+no Transporter step.
+
+**Create the key** — [App Store Connect](https://appstoreconnect.apple.com/access/integrations/api)
+→ *Users and Access* → *Integrations* → *App Store Connect API* → **+**
+
+- Name it anything ("GitHub Actions")
+- Role: **App Manager**
+- Download the `.p8` — **Apple only lets you download it once**
+- Note the **Key ID** and the **Issuer ID** shown on that page
+
+**Add the secrets** under *Settings → Secrets and variables → Actions*:
+
+| Secret | Where it comes from |
 |---|---|
-| `IOS_CERTIFICATE_P12` | Apple Distribution certificate, exported as .p12, base64-encoded |
-| `IOS_CERTIFICATE_PASSWORD` | the password you set when exporting it |
-| `IOS_PROVISIONING_PROFILE` | App Store provisioning profile, base64-encoded |
-| `IOS_PROVISIONING_PROFILE_NAME` | its name exactly as shown in the Apple Developer portal |
-| `IOS_TEAM_ID` | your 10-character Apple Team ID |
+| `APPSTORE_API_KEY_P8` | `base64 -i AuthKey_XXXX.p8 \| pbcopy` |
+| `APPSTORE_API_KEY_ID` | Key ID from that page |
+| `APPSTORE_API_ISSUER_ID` | Issuer ID from that page |
+| `APPSTORE_TEAM_ID` | 10 characters, top right of developer.apple.com |
 
-Base64-encode a file with:
+Until those exist the workflow still passes and simply notes it built
+unsigned — a missing key never masks a real compile error.
 
-```bash
-base64 -i Certificates.p12 | pbcopy
-```
+The key is written to the runner, used, and deleted in a cleanup step that
+runs even if the build fails.
 
-Until those exist the workflow still passes and simply notes that it built
-unsigned — a missing certificate never masks a real compile error.
+### What happens after that
 
-### Getting it to the App Store
+Every push to `main` builds, signs, and uploads to App Store Connect. The
+build shows up under **TestFlight** within about ten minutes, where you can
+install it on your own phone and add your league as testers.
 
-1. Run the workflow, download the **TeeBoard-ios-ipa** artifact
-2. Open **Transporter** (free, Mac App Store), sign in, drag the `.ipa` in
-3. Deliver — it appears in App Store Connect under TestFlight within minutes
+The `.ipa` is also kept as a workflow artifact, so you can still drag it into
+Transporter by hand if you ever prefer.
 
-The signing certificate and provisioning profile have to be created once in
-the Apple Developer portal. They're credentials, so that part is yours.
+You'll need the app record to exist first: App Store Connect → *My Apps* → **+**
+→ *New App*, with bundle ID `com.jandglabs.teeboard`.
 
 ## Building the native apps locally
 
