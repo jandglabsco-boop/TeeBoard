@@ -197,6 +197,12 @@ jobs:
           ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
           TEAM_ID: ${{ secrets.APPSTORE_TEAM_ID }}
         run: |
+          # App Store Connect refuses a build number it has already seen, so
+          # every upload needs a fresh one. The run number always increases and
+          # never repeats, which is exactly the requirement - and it means the
+          # build number points back at the run that produced it.
+          echo "Build number: $GITHUB_RUN_NUMBER"
+
           # -allowProvisioningUpdates lets Xcode register the bundle id, issue
           # the distribution certificate and create the profile on demand.
           xcodebuild \
@@ -211,6 +217,7 @@ jobs:
             -authenticationKeyIssuerID "$ISSUER_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             archive
 
       - name: Export .ipa
