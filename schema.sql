@@ -443,3 +443,14 @@ alter table tournaments add column if not exists skins_buy_in numeric(8,2);
 alter table tournaments drop constraint if exists tournaments_buyin_check;
 alter table tournaments add constraint tournaments_buyin_check
   check (skins_buy_in is null or (skins_buy_in >= 0 and skins_buy_in <= 10000));
+
+-- Per-player formats were impossible until this ran. scores_team_id_hole_number_key
+-- dates from when every round was a scramble and a team had exactly one score
+-- per hole. Stroke play, Stableford, Best Ball and Skins need one row per
+-- player per hole, all sharing a team_id -- which that constraint forbids, so
+-- a second player's score was rejected outright.
+--
+-- The two partial indexes above (scores_team_hole_team_score and
+-- scores_member_hole) already enforce the correct rule for both shapes, which
+-- makes the old constraint redundant as well as wrong.
+alter table scores drop constraint if exists scores_team_id_hole_number_key;
