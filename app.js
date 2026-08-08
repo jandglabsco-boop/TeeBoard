@@ -838,6 +838,14 @@ const routes = [
 const OFFLINE_KEY = "bb_pending_scores";
 const pendingScores = () => load(OFFLINE_KEY, []);
 
+// Worth retrying (the request never reached the server) as opposed to the
+// server having considered it and said no. Only the former should be queued;
+// a closed tournament will never start succeeding.
+function isConnectionError(error) {
+  const m = (error && (error.message || error.msg)) || String(error || "");
+  return /fetch|network|Failed to send|Load failed|timeout|ECONN/i.test(m);
+}
+
 function queueScore(entry) {
   const list = pendingScores();
   // Only the latest value for a given hole/player matters, so replace rather
@@ -853,18 +861,28 @@ function queueScore(entry) {
 
 let flushing = false;
 async function flushScoreQueue() {
-  if (flushing || !sb || !navigator.onLine) return;
+  // Deliberately not gated on navigator.onLine. Inside the native WebView that
+  // flag can read false while the network is perfectly fine, and gating on it
+  // meant a queued score was never retried again — the card stayed on the
+  // phone and never reached the leaderboard. Just try the write: if there is
+  // genuinely no signal the request fails fast and the entry stays queued.
+  if (flushing || !sb) return;
   const list = pendingScores();
   if (!list.length) return;
 
   flushing = true;
   const remaining = [];
   for (const entry of list) {
-    const { error } = await sb.rpc("player_set_score", entry);
+    let error = null;
+    try {
+      ({ error } = await sb.rpc("player_set_score", entry));
+    } catch (e) {
+      error = e;
+    }
     // Keep only genuine connection failures. A rejection from the server
     // (closed tournament, signed card) will never succeed on retry, so
     // holding it would block the queue forever.
-    if (error && /fetch|network|Failed to send/i.test(error.message || "")) remaining.push(entry);
+    if (error && isConnectionError(error)) remaining.push(entry);
   }
   store(OFFLINE_KEY, remaining);
   flushing = false;
@@ -882,14 +900,28 @@ function updateOfflineBadge() {
   const n = pendingScores().length;
   const offline = !navigator.onLine;
   if (!n && !offline) { el.innerHTML = ""; return; }
-  el.innerHTML = `<span class="pill" style="background:rgba(214,37,43,.12);border-color:rgba(214,37,43,.25);color:#FF6B6B">
-    ${offline ? "Offline" : ""}${n ? `${offline ? " · " : ""}${n} to sync` : ""}</span>`;
+  // Tappable when something is waiting, so a stuck card is always recoverable
+  // by hand rather than only by whatever event we happened to listen for.
+  el.innerHTML = `<span class="pill" ${n ? 'id="offline-retry" role="button" tabindex="0" style="cursor:pointer;' : 'style="'}background:rgba(214,37,43,.12);border-color:rgba(214,37,43,.25);color:#FF6B6B">
+    ${offline ? "Offline" : ""}${n ? `${offline ? " · " : ""}${n} to sync · tap to retry` : ""}</span>`;
+  const retry = document.getElementById("offline-retry");
+  if (retry) retry.addEventListener("click", () => { toast("Syncing…"); flushScoreQueue(); });
 }
 
 if (typeof window !== "undefined") {
   window.addEventListener("online", flushScoreQueue);
   window.addEventListener("online", updateOfflineBadge);
   window.addEventListener("offline", updateOfflineBadge);
+
+  // The `online` event alone is not enough. A phone that was in a dead spot
+  // during the round and is reopened on the clubhouse wifi never fires it,
+  // because as far as the WebView is concerned it was online the whole time.
+  // Retry when the app comes back to the foreground, and on a slow timer.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) { flushScoreQueue(); updateOfflineBadge(); }
+  });
+  window.addEventListener("focus", flushScoreQueue);
+  setInterval(() => { if (pendingScores().length) flushScoreQueue(); }, 20000);
 }
 
 // ---------- page views ----------
@@ -3665,22 +3697,28 @@ async function viewTeam(teamId) {
       p_member_id: memberId ?? null,
     };
 
-    if (!navigator.onLine) {
-      queueScore(entry);
-      toast("Saved on your phone — will sync when you're back in range");
-      return;
+    // Always attempt the write, even when the browser claims to be offline.
+    // navigator.onLine is advisory and reads false inside the native WebView
+    // often enough that trusting it kept scores on the phone permanently —
+    // the app looked like it had saved and the leaderboard never moved.
+    let error = null;
+    try {
+      ({ error } = await sb.rpc("player_set_score", entry));
+    } catch (e) {
+      error = e;
     }
-
-    const { error } = await sb.rpc("player_set_score", entry);
     if (!error) return render();
 
     // Distinguish "no signal" from "the server said no": only the former is
     // worth retrying later.
-    if (/fetch|network|Failed to send/i.test(error.message || "")) {
+    if (isConnectionError(error)) {
       queueScore(entry);
-      toast("No signal — saved on your phone and will sync later");
+      toast("No signal — saved on your phone, will sync automatically");
+      render();
     } else {
-      toast("Couldn't save score: " + error.message, true);
+      // A rejection is never silent: this is the difference between a score
+      // that is safe and one that has quietly gone nowhere.
+      toast("Couldn't save score: " + (error.message || error), true);
     }
   }
 
