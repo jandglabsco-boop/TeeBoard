@@ -454,3 +454,11 @@ alter table tournaments add constraint tournaments_buyin_check
 -- scores_member_hole) already enforce the correct rule for both shapes, which
 -- makes the old constraint redundant as well as wrong.
 alter table scores drop constraint if exists scores_team_id_hole_number_key;
+
+-- is_exempt was doing two unrelated jobs: "never has to pay" and "may read the
+-- site's traffic analytics". Comping someone's subscription therefore also
+-- handed them the visitor numbers, which is not what comping someone means.
+-- teeboard_stats now gates on can_view_stats instead.
+alter table organizer_billing
+  add column if not exists can_view_stats boolean not null default false;
+update organizer_billing set can_view_stats = true where is_exempt;
