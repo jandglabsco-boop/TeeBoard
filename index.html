@@ -106,9 +106,9 @@
 
   /* Header tab. Reads as chrome until it's the page you're on, then it
      lights up the way a selected broadcast tab does. */
-  #nav-tournaments { transition: color .15s ease, background .15s ease; }
-  #nav-tournaments:hover { color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); }
-  #nav-tournaments.is-active { color: var(--grass-400); background: rgba(76,203,120,.12); }
+  #nav-tournaments, #nav-players { transition: color .15s ease, background .15s ease; }
+  #nav-tournaments:hover, #nav-players:hover { color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); }
+  #nav-tournaments.is-active, #nav-players.is-active { color: var(--grass-400); background: rgba(76,203,120,.12); }
 
   .wordmark {
     font-family: 'Barlow Condensed', sans-serif;
@@ -577,6 +577,7 @@
       </a>
       <div class="flex items-center gap-2.5">
         <a href="#/tournaments" id="nav-tournaments" class="eyebrow on-dark px-2 py-1 rounded-md">Tournaments</a>
+        <a href="#/players" id="nav-players" class="eyebrow on-dark px-2 py-1 rounded-md">Players</a>
         <span id="offline-badge"></span>
         <span id="header-sub"></span>
         <div id="header-profile"></div>
@@ -596,6 +597,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260924b"></script>
+  <script src="app.js?v=20260924c"></script>
 </body>
 </html>

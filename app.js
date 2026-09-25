@@ -820,6 +820,8 @@ const routes = [
   { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/billing/, view: () => viewBilling() },
   { re: /^#\/tournaments$/, view: () => viewTournaments() },
+  { re: /^#\/players$/, view: () => viewPlayers() },
+  { re: /^#\/player\/(.+)$/, view: (m) => viewPlayer(m[1]) },
   { re: /^#\/stats$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
   { re: /^#\/privacy$/, view: () => viewLegal("privacy") },
@@ -984,6 +986,8 @@ function route() {
 
   const navTournaments = document.getElementById("nav-tournaments");
   if (navTournaments) navTournaments.classList.toggle("is-active", hash === "#/tournaments");
+  const navPlayers = document.getElementById("nav-players");
+  if (navPlayers) navPlayers.classList.toggle("is-active", hash.startsWith("#/player"));
 
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -1561,6 +1565,167 @@ const LEGAL = {
 
 // #/stats — visitor numbers. Restricted to comped (owner) accounts by the
 // teeboard_stats function itself, not just by hiding the link.
+// ---------- CAREER STATS ----------
+//
+// Players never sign in, so identity here is the name on the roster, trimmed
+// and lowercased. That merges "Gabe Herbst" and "gabe herbst" as intended,
+// but it cannot tell two different Gabes apart, and it will not connect "Gabe"
+// to "Gabe Herbst". Displayed spelling is whichever the player used most
+// recently.
+//
+// Everything is derived by running buildLeaderboard over each tournament —
+// the same function the live leaderboards use — so a profile can never
+// disagree with the board it came from.
+
+// Order-of-merit points by finishing position. Tied players split the points
+// for the places they occupy, which is how real orders of merit handle it:
+// two players tied for 1st share 1st and 2nd money, not 1st twice.
+const PLACE_POINTS = [100, 75, 60, 50, 45, 40, 36, 32, 29, 26];
+const PLACE_POINTS_TAIL = 20;
+
+function pointsForPlace(place) {
+  return PLACE_POINTS[place - 1] ?? PLACE_POINTS_TAIL;
+}
+
+function emptyPlayerStats(name) {
+  return {
+    name,
+    rounds: 0,
+    points: 0,
+    wins: 0,
+    podiums: 0,
+    bestFinish: null,
+    finishes: [],          // every place, for an average
+    eagles: 0, birdies: 0, pars: 0, bogeys: 0, doubles: 0,
+    holesPlayed: 0,
+    toPar: 0,              // cumulative, across completed rounds
+    history: [],           // one entry per tournament
+  };
+}
+
+/**
+ * Turns the nested tournament payload into per-player career records.
+ * `tournaments` must include teams -> team_members and scores.
+ */
+function buildCareerStats(tournaments) {
+  const byKey = new Map();
+  const displayName = new Map();
+
+  function statsFor(rawName) {
+    const key = String(rawName || "").trim().toLowerCase();
+    if (!key) return null;
+    if (!byKey.has(key)) byKey.set(key, emptyPlayerStats(rawName.trim()));
+    // Latest spelling wins, so a tidied-up roster entry propagates.
+    displayName.set(key, rawName.trim());
+    return byKey.get(key);
+  }
+
+  (tournaments || []).forEach((t) => {
+    const teams = t.teams || [];
+    const rows = buildLeaderboard(t, teams);
+    const started = rows.filter((r) => r.thru > 0);
+    if (!started.length) return;                 // nothing was ever scored
+
+    // A "win" only means something against somebody. A solo outing is a
+    // round played, not a title.
+    const contested = started.length > 1;
+    const par = tournamentPar(t);
+    const fmt = formatOf(t);
+
+    // How many rows share each place, so ties can split the points.
+    const placeCounts = new Map();
+    started.forEach((r) => placeCounts.set(r.place, (placeCounts.get(r.place) || 0) + 1));
+
+    started.forEach((row) => {
+      // Who does this row represent? Team formats credit every member;
+      // per-player formats credit the one golfer.
+      const names = fmt.ranks === "team"
+        ? (row.players || [])
+        : [row.name];
+
+      const shareCount = placeCounts.get(row.place) || 1;
+      // Sum the points for the block of places this tie occupies, then split.
+      let blockTotal = 0;
+      for (let i = 0; i < shareCount; i++) blockTotal += pointsForPlace(row.place + i);
+      const points = contested ? blockTotal / shareCount : 0;
+
+      names.forEach((rawName) => {
+        const s = statsFor(rawName);
+        if (!s) return;
+
+        s.rounds += 1;
+        s.points += points;
+        s.finishes.push(row.place);
+        if (s.bestFinish == null || row.place < s.bestFinish) s.bestFinish = row.place;
+        if (contested && row.place === 1) s.wins += 1;
+        if (contested && row.place <= 3) s.podiums += 1;
+        s.toPar += row.toPar;
+
+        for (let h = 1; h <= t.num_holes; h++) {
+          const strokes = row.scoreMap[h];
+          if (strokes == null) continue;
+          s.holesPlayed += 1;
+          switch (holeMarkClass(strokes, par[h - 1] ?? 4)) {
+            case "eagle": s.eagles += 1; break;
+            case "birdie": s.birdies += 1; break;
+            case "bogey": s.bogeys += 1; break;
+            case "double-bogey": s.doubles += 1; break;
+            default: s.pars += 1; break;
+          }
+        }
+
+        s.history.push({
+          tournamentId: t.id,
+          teamId: row.teamId,
+          name: t.name,
+          date: t.created_at,
+          format: fmt.label,
+          place: row.place,
+          tied: row.tied,
+          contested,
+          toPar: row.toPar,
+          thru: row.thru,
+          numHoles: t.num_holes,
+          points,
+        });
+      });
+    });
+  });
+
+  const out = [...byKey.entries()].map(([key, s]) => ({
+    ...s,
+    key,
+    name: displayName.get(key) || s.name,
+    avgFinish: s.finishes.length
+      ? s.finishes.reduce((a, b) => a + b, 0) / s.finishes.length
+      : null,
+    history: s.history.sort((a, b) => new Date(b.date) - new Date(a.date)),
+  }));
+
+  out.sort((a, b) =>
+    b.points - a.points ||
+    b.wins - a.wins ||
+    a.toPar - b.toPar ||
+    a.name.localeCompare(b.name));
+
+  return out;
+}
+
+// One fetch feeds every career view. Nested so the scoring engine gets the
+// same shape the leaderboard builds from.
+const CAREER_SELECT =
+  "id, name, course_name, format, num_holes, start_hole, status, par, handicap, yardage, skins_buy_in, created_at, " +
+  "teams(id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id))";
+
+let careerCache = null;
+async function loadCareerStats(force = false) {
+  if (careerCache && !force) return careerCache;
+  const { data, error } = await sb.from("tournaments").select(CAREER_SELECT);
+  if (error) throw error;
+  careerCache = buildCareerStats(data || []);
+  return careerCache;
+}
+
 // ---------- TOURNAMENT DIRECTORY ----------
 // A public board of every tournament, live and finished. Anyone can watch;
 // anyone playing in a live one can check in from here rather than needing the
@@ -1659,6 +1824,192 @@ async function viewTournaments() {
 
     <p class="text-xs muted-2 text-center mt-5">
       Organizing instead? <a href="#/create" class="link-underline">Start a tournament</a>.
+    </p>
+  `;
+}
+
+// ---------- PLAYER RANKINGS ----------
+
+async function viewPlayers() {
+  app.innerHTML = loadingHtml();
+
+  let players;
+  try {
+    players = await loadCareerStats();
+  } catch (err) {
+    app.innerHTML = `
+      <div class="card p-6 mt-4 text-center">
+        <h2 class="text-lg mb-2">Couldn't load rankings</h2>
+        <p class="text-sm muted">${escapeHtml(err.message || String(err))}</p>
+      </div>`;
+    return;
+  }
+
+  const ranked = players.filter((p) => p.rounds > 0);
+
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-6 pb-5 mb-4">
+      <div class="eyebrow on-dark mb-2">Rankings</div>
+      <h1 class="display" style="font-size:2rem;color:#fff">Order of merit</h1>
+      <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
+        Points from every finish, across every round. Tap anyone for their card.
+      </p>
+    </section>
+
+    ${ranked.length === 0 ? `
+      <div class="card p-6 text-center">
+        <div class="font-semibold mb-1">No completed rounds yet</div>
+        <p class="text-sm muted">Rankings appear once scores go in.</p>
+      </div>` : `
+      <div class="card overflow-hidden">
+        <div class="lb-head flex items-center px-3 py-2">
+          <span style="width:2.5rem"></span>
+          <span class="flex-1 eyebrow on-dark">Player</span>
+          <span class="eyebrow on-dark text-right" style="width:3.2rem">Pts</span>
+          <span class="eyebrow on-dark text-right" style="width:2.6rem">Wins</span>
+          <span class="eyebrow on-dark text-right" style="width:3rem">Rds</span>
+        </div>
+        ${ranked.map((p, i) => `
+          <a href="#/player/${encodeURIComponent(p.key)}"
+             class="lb-row flex items-center px-3 py-3 ${i === ranked.length - 1 ? "" : "border-b"}"
+             style="border-color:var(--line)">
+            <span style="width:2.5rem">
+              <span class="rank${i === 0 ? " lead" : ""}">${i + 1}</span>
+            </span>
+            <span class="flex-1 min-w-0 pr-2">
+              <span class="font-semibold text-sm block truncate">${escapeHtml(p.name)}</span>
+              <span class="text-[11px] muted-2">
+                ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
+              </span>
+            </span>
+            <span class="num-display text-right" style="width:3.2rem;font-size:1.15rem">${Math.round(p.points)}</span>
+            <span class="num text-right text-sm font-semibold" style="width:2.6rem">${p.wins || "–"}</span>
+            <span class="num text-right text-sm muted" style="width:3rem">${p.rounds}</span>
+          </a>`).join("")}
+      </div>
+
+      <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
+        1st is worth ${PLACE_POINTS[0]} points, 2nd ${PLACE_POINTS[1]}, 3rd ${PLACE_POINTS[2]}, down to
+        ${PLACE_POINTS_TAIL} for anyone outside the top ${PLACE_POINTS.length}.
+        Ties split the points for the places they cover. A round with only one
+        team on the board scores no points.
+      </p>`}
+  `;
+}
+
+// ---------- PLAYER PROFILE ----------
+
+async function viewPlayer(keyRaw) {
+  app.innerHTML = loadingHtml();
+  const key = decodeURIComponent(keyRaw || "").toLowerCase();
+
+  let players;
+  try {
+    players = await loadCareerStats();
+  } catch (err) {
+    app.innerHTML = notFoundHtml("Player");
+    return;
+  }
+
+  const p = players.find((x) => x.key === key);
+  if (!p) {
+    app.innerHTML = notFoundHtml("Player");
+    return;
+  }
+
+  const scoringHoles = p.holesPlayed || 1;
+  const pct = (n) => `${Math.round((n / scoringHoles) * 100)}%`;
+  const rank = players.filter((x) => x.rounds > 0).findIndex((x) => x.key === key) + 1;
+
+  function markCell(label, value, cls) {
+    return `
+      <div class="text-center px-1 py-3">
+        <div class="hole-mark ${cls} mx-auto mb-1.5" style="width:34px;height:34px;line-height:34px;font-size:.95rem">${value}</div>
+        <div class="eyebrow" style="font-size:.65rem">${label}</div>
+        <div class="text-[11px] muted-2">${pct(value)}</div>
+      </div>`;
+  }
+
+  app.innerHTML = `
+    <a href="#/players" class="btn-ghost mb-3">${icon("arrow", 13, "rotate-180")} All players</a>
+
+    <section class="panel-dark px-5 pt-6 pb-5 mb-3">
+      <div class="eyebrow on-dark mb-1">${rank ? `#${rank} on the order of merit` : "Player"}</div>
+      <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(p.name)}</h1>
+      <div class="flex gap-7 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
+        <div>
+          <div class="num-display" style="font-size:1.6rem;color:#fff">${Math.round(p.points)}</div>
+          <div class="eyebrow on-dark">Points</div>
+        </div>
+        <div>
+          <div class="num-display" style="font-size:1.6rem;color:${p.wins ? "var(--gold)" : "#fff"}">${p.wins}</div>
+          <div class="eyebrow on-dark">Wins</div>
+        </div>
+        <div>
+          <div class="num-display" style="font-size:1.6rem;color:#fff">${p.rounds}</div>
+          <div class="eyebrow on-dark">Rounds</div>
+        </div>
+        <div>
+          <div class="num-display" style="font-size:1.6rem;color:#fff">${p.bestFinish ?? "–"}</div>
+          <div class="eyebrow on-dark">Best</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flex items-center gap-3 mt-5 mb-2.5">
+      <span class="eyebrow">Scoring · ${p.holesPlayed} holes</span>
+      <span class="flex-1 hairline"></span>
+    </div>
+    <div class="card grid grid-cols-5 divide-x" style="border-color:var(--line)">
+      ${markCell("Eagles", p.eagles, "eagle")}
+      ${markCell("Birdies", p.birdies, "birdie")}
+      ${markCell("Pars", p.pars, "")}
+      ${markCell("Bogeys", p.bogeys, "bogey")}
+      ${markCell("Doubles+", p.doubles, "double-bogey")}
+    </div>
+
+    <div class="card p-4 mt-2.5 flex items-center justify-between">
+      <div>
+        <div class="eyebrow">Podiums</div>
+        <div class="text-sm muted">Top-three finishes</div>
+      </div>
+      <div class="num-display" style="font-size:1.5rem">${p.podiums}</div>
+    </div>
+    <div class="card p-4 mt-2.5 flex items-center justify-between">
+      <div>
+        <div class="eyebrow">Average finish</div>
+        <div class="text-sm muted">Across ${p.rounds} round${p.rounds === 1 ? "" : "s"}</div>
+      </div>
+      <div class="num-display" style="font-size:1.5rem">${p.avgFinish ? p.avgFinish.toFixed(1) : "–"}</div>
+    </div>
+
+    <div class="flex items-center gap-3 mt-6 mb-2.5">
+      <span class="eyebrow">Rounds</span>
+      <span class="flex-1 hairline"></span>
+    </div>
+    ${p.history.map((h) => `
+      <a href="#/leaderboard/${h.tournamentId}" class="card p-4 mb-2.5 flex items-center gap-3">
+        <span class="rank${h.place === 1 && h.contested ? " lead" : ""}${h.tied ? " tied" : ""}" style="flex-shrink:0">
+          ${h.tied ? "T" : ""}${h.place}
+        </span>
+        <span class="flex-1 min-w-0">
+          <span class="font-semibold text-sm block truncate">${escapeHtml(h.name)}</span>
+          <span class="text-[11px] muted-2">
+            ${escapeHtml(h.format)} · ${new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+            ${h.contested ? "" : " · unopposed"}
+          </span>
+        </span>
+        <span class="text-right">
+          <span class="num-display block" style="font-size:1.2rem;color:${h.toPar < 0 ? "var(--under)" : "var(--ink)"}">
+            ${h.thru ? toParLabel(h.toPar) : "–"}
+          </span>
+          <span class="text-[11px] muted-2">${Math.round(h.points)} pts</span>
+        </span>
+      </a>`).join("")}
+
+    <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
+      Players are matched by the name on the roster. Two people with the same
+      name share a profile, and the same person entered differently counts twice.
     </p>
   `;
 }
