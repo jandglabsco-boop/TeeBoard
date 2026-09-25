@@ -2218,6 +2218,7 @@ function renderCreateForm(user, billing) {
         <div id="course-results" class="hidden absolute z-20 left-0 right-0 mt-1 card max-h-64 overflow-y-auto"></div>
         <p id="course-attribution" class="text-xs muted-2 mt-1.5 leading-relaxed">Pulls real hole-by-hole par from <a href="https://opengolfapi.org" target="_blank" class="link-underline">OpenGolfAPI</a> (free &amp; open, ODbL). Not listed? No problem — every hole defaults to par 4.</p>
         <p id="course-selected-note" class="hidden text-xs font-semibold mt-2 p-2 rounded-lg" style="color:var(--grass-700);background:var(--grass-100)"></p>
+        <div id="course-unmatched" class="hidden text-xs mt-2 p-3 rounded-lg" style="color:var(--under);background:rgba(214,37,43,.08);border:1px solid rgba(214,37,43,.25)"></div>
       </div>
       <div>
         <label class="field-label">Format</label>
@@ -2281,6 +2282,9 @@ function renderCreateForm(user, billing) {
   // longer editable as raw text — it's always derived from this (or defaults
   // to par 4 everywhere), based on the Holes / Which-nine selections below.
   let courseScorecard = null;
+  // Set only when the organizer has been shown what a typed-but-unmatched
+  // course costs them and chosen to go ahead regardless.
+  let allowUnmatchedCourse = false;
 
   function hideResults() {
     resultsBox.classList.add("hidden");
@@ -2350,6 +2354,10 @@ function renderCreateForm(user, billing) {
     selectedNote.classList.add("hidden");
     selectedNote.textContent = "";
     courseScorecard = null;
+    // Editing the course name invalidates any previous "create anyway"
+    // decision — the warning has to be earned again for the new text.
+    allowUnmatchedCourse = false;
+    document.getElementById("course-unmatched").classList.add("hidden");
     updateNineVisibility();
   }
 
@@ -2499,6 +2507,38 @@ function renderCreateForm(user, billing) {
     const startHole = numHoles === 9 && nineSelect.value === "back" ? 10 : 1;
 
     const btn = e.target.querySelector("button");
+
+    // Typing a course name is not the same as picking one. Without a match
+    // there is no scorecard to pull, so every hole silently becomes par 4
+    // with no yardage and no stroke index — which nobody discovers until
+    // they are standing on the first tee. Make it a decision, not a default.
+    if (course && !courseScorecard && !allowUnmatchedCourse) {
+      const warn = document.getElementById("course-unmatched");
+      warn.innerHTML = `
+        <div class="font-semibold mb-1">“${escapeHtml(course)}” wasn’t picked from the list</div>
+        <p class="mb-2" style="color:var(--ink-600)">
+          Nothing was matched, so this card will have <b>every hole at par 4</b>, no yardages
+          and no stroke indexes — which also means ties can’t be broken on the hardest holes.
+        </p>
+        <div class="flex gap-2 flex-wrap">
+          <button type="button" id="course-fix" class="btn-secondary text-xs px-3 py-1.5">Search for the course</button>
+          <button type="button" id="course-anyway" class="btn-ghost text-xs px-3 py-1.5" style="color:var(--under)">Create anyway with par 4</button>
+        </div>`;
+      warn.classList.remove("hidden");
+      warn.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById("course-fix").addEventListener("click", () => {
+        warn.classList.add("hidden");
+        courseInput.focus();
+        courseInput.select();
+      });
+      document.getElementById("course-anyway").addEventListener("click", () => {
+        allowUnmatchedCourse = true;
+        warn.classList.add("hidden");
+        e.target.requestSubmit();
+      });
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = "Creating…";
 
