@@ -379,7 +379,7 @@ function tournamentFinished(tournament, teams) {
 // columns instead.
 const TOURNAMENT_COLS =
   "id, name, course_name, num_holes, par, status, created_at, created_by, " +
-  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in, is_public";
+  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in, is_public, single_scorer";
 
 // Same list for an embedded select — `teams(*, tournaments(...))`. PostgREST
 // wants no spaces inside the parentheses.
@@ -1080,6 +1080,7 @@ const routes = [
   { re: /^#\/join\/([A-Za-z0-9]+)$/, view: (m) => viewJoin(m[1]) },
   { re: /^#\/admin\/([0-9a-fA-F-]+)$/, view: (m) => viewAdmin(m[1]) },
   { re: /^#\/team\/([0-9a-fA-F-]+)$/, view: (m) => viewTeam(m[1]) },
+  { re: /^#\/score\/([0-9a-fA-F-]+)$/, view: (m) => viewMatchScore(m[1]) },
   { re: /^#\/leaderboard\/([0-9a-fA-F-]+)$/, view: (m) => viewLeaderboard(m[1]) },
   { re: /^#\/scorecard\/([0-9a-fA-F-]+)$/, view: (m) => viewScorecard(m[1]) },
 ];
@@ -3369,10 +3370,11 @@ function renderCreateForm(user, billing, opts = {}) {
       <h1 class="text-2xl">${opts.match ? "Create a match" : "Create a tournament"}</h1>
     </div>
     <form id="create-form" class="card p-5 flex flex-col gap-5">
+      ${opts.match ? "" : `
       <div>
         <label class="field-label">Tournament name</label>
         <input name="name" required placeholder="Thursday Night Scramble" />
-      </div>
+      </div>`}
       <div class="relative">
         <label class="field-label">Course</label>
         <input id="course-input" name="course" placeholder="Search your course… e.g. Pine Valley" autocomplete="off" />
@@ -3384,8 +3386,9 @@ function renderCreateForm(user, billing, opts = {}) {
       <div>
         <label class="field-label">Format</label>
         <select id="format-select" name="format">
-          ${Object.entries(FORMATS).map(([k, f]) =>
-            `<option value="${k}">${f.label}</option>`).join("")}
+          ${Object.entries(FORMATS)
+            .filter(([, f]) => (opts.match ? f.match : !f.match))
+            .map(([k, f]) => `<option value="${k}">${f.label}</option>`).join("")}
         </select>
         <p id="format-blurb" class="text-xs muted-2 mt-1.5 leading-relaxed"></p>
       </div>
@@ -3433,6 +3436,21 @@ function renderCreateForm(user, billing, opts = {}) {
           <option value="back">Back nine (holes 10–18)</option>
         </select>
       </div>
+      ${opts.match ? `
+        <!-- Players are entered here rather than added afterwards: a match is
+             two named sides, and there is nothing to manage before they exist.
+             Team names are not asked for - a side is who is playing on it. -->
+        <div id="match-players"></div>
+
+        <label class="checkrow">
+          <input type="checkbox" id="single-scorer" />
+          <span>
+            <span class="cr-t">One person keeps score for the group</span>
+            <span class="cr-s">One phone enters every player's card, hole by hole. Leave this off and each side scores its own.</span>
+          </span>
+        </label>
+      ` : ""}
+
       <button class="btn-primary w-full" type="submit">Create &amp; get code</button>
     </form>
   `;
@@ -3441,6 +3459,47 @@ function renderCreateForm(user, billing, opts = {}) {
   // Arriving from "Create a match" opens on singles; the other match formats
   // are in the same list, so switching to four-ball is one tap away.
   if (opts.match) formatSelect.value = "match_singles";
+
+  // Player slots follow the format: two for singles, two a side otherwise.
+  // Re-rendered on a format change, keeping whatever has been typed.
+  function renderPlayerSlots() {
+    const wrap = document.getElementById("match-players");
+    if (!wrap) return;
+    const perSide = FORMATS[formatSelect.value]?.sideSize || 1;
+    const kept = [...wrap.querySelectorAll("[data-player]")].map((el) => ({
+      name: el.querySelector("[data-pname]").value,
+      hcp: el.querySelector("[data-phcp]").value,
+    }));
+
+    const slot = (i, label) => {
+      const prior = kept[i] || { name: "", hcp: "" };
+      return `
+        <div class="flex gap-2 mb-2" data-player="${i}">
+          <input data-pname placeholder="${escapeHtml(label)}" value="${escapeHtml(prior.name)}"
+                 class="flex-1 min-w-0" aria-label="${escapeHtml(label)}" />
+          <input data-phcp type="number" min="0" max="54" step="0.1" placeholder="HCP"
+                 value="${escapeHtml(prior.hcp)}" style="width:5.5rem" aria-label="Handicap for ${escapeHtml(label)}" />
+        </div>`;
+    };
+
+    if (perSide === 1) {
+      wrap.innerHTML = `
+        <label class="field-label">Players</label>
+        ${slot(0, "Player 1")}
+        ${slot(1, "Player 2")}
+        <p class="text-xs muted-2 mt-1">Handicaps are optional. With them, the match plays off the difference — the lower handicap gives shots.</p>`;
+    } else {
+      wrap.innerHTML = `
+        <label class="field-label">Side one</label>
+        ${slot(0, "Player 1")}
+        ${slot(1, "Player 2")}
+        <label class="field-label mt-3">Side two</label>
+        ${slot(2, "Player 3")}
+        ${slot(3, "Player 4")}
+        <p class="text-xs muted-2 mt-1">Handicaps are optional. With them, everyone plays off the lowest handicap in the match.</p>`;
+    }
+  }
+  if (opts.match) { renderPlayerSlots(); formatSelect.addEventListener("change", renderPlayerSlots); }
   const formatBlurb = document.getElementById("format-blurb");
   const buyinWrap = document.getElementById("buyin-wrap");
   const refreshFormatBlurb = () => {
@@ -3724,7 +3783,38 @@ function renderCreateForm(user, billing, opts = {}) {
   document.getElementById("create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const name = fd.get("name").trim();
+
+    // A match names itself from who is playing — "Gabe vs Roland", or
+    // "Gabe & Bill vs Roland & Drake" — so the form never asks for one.
+    let matchPlayers = null;
+    if (opts.match) {
+      const rows = [...document.querySelectorAll("#match-players [data-player]")];
+      matchPlayers = rows.map((el) => ({
+        name: el.querySelector("[data-pname]").value.trim(),
+        handicap: el.querySelector("[data-phcp]").value.trim(),
+      }));
+      const missing = matchPlayers.some((p) => !p.name);
+      if (missing) {
+        toast("Every player needs a name.", true);
+        return;
+      }
+      const bad = matchPlayers.find((p) => {
+        if (p.handicap === "") return false;
+        const v = Number(p.handicap);
+        return !Number.isFinite(v) || v < 0 || v > 54;
+      });
+      if (bad) {
+        toast(`Handicap for ${bad.name} must be between 0 and 54, or left blank.`, true);
+        return;
+      }
+    }
+
+    const perSide = opts.match ? (FORMATS[formatSelect.value]?.sideSize || 1) : 0;
+    const sideLabel = (i) => matchPlayers
+      .slice(i * perSide, i * perSide + perSide).map((p) => p.name).join(" & ");
+    const name = opts.match
+      ? `${sideLabel(0)} vs ${sideLabel(1)}`.slice(0, 80)
+      : fd.get("name").trim();
     const course = fd.get("course").trim();
     const numHoles = parseInt(fd.get("holes"), 10);
     const par = getCurrentPar();
@@ -3785,6 +3875,7 @@ function renderCreateForm(user, billing, opts = {}) {
           tee_name: (courseScorecard && courseScorecard.teeName) || null,
           course_id: (courseScorecard && courseScorecard.courseId) || null,
           is_public: document.getElementById("visibility-select").value !== "private",
+          single_scorer: !!document.getElementById("single-scorer")?.checked,
           created_by: user.id,
         })
         .select()
@@ -3803,6 +3894,35 @@ function renderCreateForm(user, billing, opts = {}) {
       btn.textContent = "Create & get code";
       return;
     }
+    // A match already knows its sides, so build them now rather than sending
+    // the organizer to a roster screen with nothing on it. Each side is a team
+    // named after whoever is on it; the team name is never asked for.
+    if (opts.match && matchPlayers) {
+      const sides = [0, 1].map((i) => matchPlayers.slice(i * perSide, i * perSide + perSide));
+      for (const side of sides) {
+        const { data: team, error: teamErr } = await sb.rpc("organizer_add_team", {
+          p_tournament_id: tournament.id,
+          p_team_name: side.map((p) => p.name).join(" & ").slice(0, 60),
+        });
+        if (teamErr || !team) {
+          toast("Match created, but a side could not be added: " + (teamErr?.message || "unknown error"), true);
+          location.hash = `#/admin/${tournament.id}`;
+          return;
+        }
+        for (const p of side) {
+          const { error: memberErr } = await sb.rpc("organizer_add_player", {
+            p_team_id: team.id,
+            p_player_name: p.name,
+            p_handicap: p.handicap === "" ? null : Number(p.handicap),
+          });
+          if (memberErr) toast(`Couldn't add ${p.name}: ${memberErr.message}`, true);
+        }
+      }
+      // Straight to the match: it is ready to score.
+      location.hash = `#/leaderboard/${tournament.id}`;
+      return;
+    }
+
     location.hash = `#/admin/${tournament.id}`;
   });
 }
@@ -4686,6 +4806,148 @@ async function renderTeamStep(tournament) {
 
 // ---------- SCORECARD ----------
 
+// ---------- ONE SCORER, WHOLE GROUP ----------
+//
+// The normal flow is a phone per side. With single_scorer on, one person
+// enters every player's card, so this screen spans both sides instead of one
+// team. Writes still go through player_set_score gated on each side's own
+// code, so nothing here widens who can change a card.
+
+async function viewMatchScore(tournamentId) {
+  app.innerHTML = loadingHtml();
+
+  const { data: tournament, error } = await sb
+    .from("tournaments").select(TOURNAMENT_COLS).eq("id", tournamentId).single();
+  if (error || !tournament) { app.innerHTML = notFoundHtml("Match"); return; }
+
+  const par = tournament.par && tournament.par.length === tournament.num_holes
+    ? tournament.par : Array(tournament.num_holes).fill(4);
+  const n = tournament.num_holes;
+
+  async function render() {
+    const { data: teams } = await sb
+      .from("teams")
+      .select("id, name, join_code, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
+      .eq("tournament_id", tournamentId);
+
+    const sides = (teams || []).slice(0, 2);
+    if (sides.length < 2) {
+      app.innerHTML = `<div class="panel p-8 text-center mt-4">
+        <p class="text-sm muted">This match doesn't have two sides yet.</p></div>`;
+      return;
+    }
+
+    // Flatten to the people actually holding a club, each carrying the code
+    // its own side scores under.
+    const players = sides.flatMap((t) => (t.team_members || []).map((m) => ({
+      id: m.id, name: m.player_name, handicap: m.handicap,
+      teamId: t.id, teamCode: t.join_code, sideName: t.name,
+    })));
+    const byMember = {};
+    players.forEach((p) => { byMember[p.id] = {}; });
+    sides.forEach((t) => (t.scores || []).forEach((sc) => {
+      if (sc.team_member_id && byMember[sc.team_member_id]) byMember[sc.team_member_id][sc.hole_number] = sc.strokes;
+    }));
+
+    const locked = sides.every((t) => t.signed_at);
+    const done = players.every((p) => Object.keys(byMember[p.id]).length >= n);
+
+    let holes = "";
+    for (let h = 1; h <= n; h++) {
+      holes += `
+        <div class="card px-3 py-2.5 mb-2">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="num-display" style="font-size:1.4rem;min-width:1.6rem">${holeLabel(tournament, h)}</span>
+            <span class="eyebrow">Par ${par[h - 1]}</span>
+            ${tournament.yardage?.[h - 1] ? `<span class="eyebrow">${tournament.yardage[h - 1]} yds</span>` : ""}
+          </div>
+          <div class="flex flex-col gap-1.5">
+            ${players.map((p) => {
+              const v = byMember[p.id][h] ?? "";
+              return `
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm truncate ${v === "" ? "muted-2" : ""}">${escapeHtml(p.name)}</span>
+                  ${locked ? `
+                    <span class="hole-mark hole-mark-sm ${holeMarkClass(byMember[p.id][h], par[h - 1])}">${v || "—"}</span>
+                  ` : `
+                    <span class="flex items-center gap-1 shrink-0">
+                      <button data-hole="${h}" data-member="${p.id}" data-delta="-1" class="step-btn"
+                              style="width:2.1rem;height:2.1rem;font-size:1.1rem"
+                              aria-label="One less for ${escapeHtml(p.name)} on hole ${holeLabel(tournament, h)}">−</button>
+                      <input data-hole="${h}" data-member="${p.id}" type="number" inputmode="numeric" min="1" max="15"
+                             value="${v}" class="step-value" style="width:2.6rem;height:2.1rem;font-size:1.15rem"
+                             aria-label="Strokes for ${escapeHtml(p.name)} on hole ${holeLabel(tournament, h)}" placeholder="–" />
+                      <button data-hole="${h}" data-member="${p.id}" data-delta="1" class="step-btn"
+                              style="width:2.1rem;height:2.1rem;font-size:1.1rem"
+                              aria-label="One more for ${escapeHtml(p.name)} on hole ${holeLabel(tournament, h)}">+</button>
+                    </span>
+                  `}
+                </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+    }
+
+    app.innerHTML = `
+      <div class="idband">
+        <div class="idband-top">
+          <div class="min-w-0">
+            <div class="idname">${escapeHtml(tournament.name)}</div>
+            <div class="idmeta">${escapeHtml(formatOf(tournament).label)} · keeping score for everyone</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3">${holes}</div>
+      <a href="#/leaderboard/${tournamentId}" class="btn-primary w-full mt-1">
+        ${done ? "See the result" : "See the match"}
+      </a>
+      <p class="text-xs muted-2 text-center mt-3">Scores save as you enter them.</p>
+    `;
+
+    if (locked) return;
+
+    const playerById = Object.fromEntries(players.map((p) => [p.id, p]));
+
+    async function save(hole, strokes, memberId) {
+      const p = playerById[memberId];
+      if (!p) return;
+      const entry = {
+        p_team_code: p.teamCode,
+        p_hole: hole,
+        p_strokes: strokes,
+        p_member_id: memberId,
+      };
+      let err = null;
+      try { ({ error: err } = await sb.rpc("player_set_score", entry)); }
+      catch (e) { err = e; }
+      if (!err) return render();
+      if (isConnectionError(err)) { queueScore(entry); toast("Saved on this phone — will sync when you're back online"); }
+      else toast("Couldn't save: " + (err.message || "try again"), true);
+    }
+
+    app.querySelectorAll("button[data-delta]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const hole = +btn.dataset.hole, member = btn.dataset.member;
+        const input = app.querySelector(`input[data-hole="${hole}"][data-member="${member}"]`);
+        const current = parseInt(input.value, 10);
+        const next = Number.isFinite(current) ? current + (+btn.dataset.delta) : par[hole - 1];
+        if (next < 1 || next > 15) return;
+        input.value = next;
+        save(hole, next, member);
+      });
+    });
+    app.querySelectorAll("input[data-hole]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const v = parseInt(input.value, 10);
+        if (!Number.isFinite(v) || v < 1 || v > 15) { input.value = ""; return; }
+        save(+input.dataset.hole, v, input.dataset.member);
+      });
+    });
+  }
+
+  await render();
+}
+
 async function viewTeam(teamId) {
   app.innerHTML = loadingHtml();
 
@@ -5017,9 +5279,23 @@ async function viewTeam(teamId) {
 // ---------- LEADERBOARD ----------
 
 // The match screen: who is up, by how many, and the hole-by-hole story.
-function renderMatchBoard(tournament, teams) {
+async function renderMatchBoard(tournament, teams) {
   const fmt = formatOf(tournament);
   const m = buildMatch(tournament, teams);
+
+  // The code is shown to the people entitled to it and nobody else:
+  //   - the organizer, who owns the match and reads it from the row
+  //   - anyone already keeping score, who has it on their own device from
+  //     when they joined, so no privileged read is needed to show it back
+  // A passer-by opening a public match sees no code at all. join_code stays
+  // ungranted to anon at the column level, so this is belt and braces.
+  let shareCode = null;
+  const mine = myTeams()[tournament.id];
+  if (mine?.tournamentCode) shareCode = mine.tournamentCode;
+  if (!shareCode) {
+    const user = await getUser();
+    if (user && tournament.created_by === user.id) shareCode = tournament.join_code || null;
+  }
 
   const metaBits = [fmt.label, `${tournament.num_holes} holes`, tournament.course_name || null].filter(Boolean);
   const head = `
@@ -5031,6 +5307,12 @@ function renderMatchBoard(tournament, teams) {
         </div>
         ${tournament.is_public === false ? `<span class="pill">PRIVATE</span>` : ""}
       </div>
+      ${shareCode ? `
+        <div class="sharecode">
+          <span class="sc-l">Join code</span>
+          <span class="sc-v">${escapeHtml(shareCode)}</span>
+          <button id="copy-code" class="sc-b" type="button">Copy</button>
+        </div>` : ""}
     </div>`;
 
   if (m.incomplete) {
@@ -5087,6 +5369,11 @@ function renderMatchBoard(tournament, teams) {
         : `${m.played} of ${tournament.num_holes} played`}</div>
     </div>
 
+    ${tournament.single_scorer ? `
+      <a href="#/score/${tournament.id}" class="btn-primary w-full mt-3">
+        ${m.played ? "Keep scoring" : "Start scoring"}
+      </a>` : ""}
+
     ${playedHoles.length ? `
       <div class="sectionbar mt-5"><span class="t">Hole by hole</span><span class="rule"></span></div>
       <table class="dtable">
@@ -5115,6 +5402,20 @@ function renderMatchBoard(tournament, teams) {
       <p class="text-xs muted-2 mt-2 text-center">Scores shown are net of handicap strokes.</p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}
   `;
+
+  const copyBtn = document.getElementById("copy-code");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(shareCode);
+        toast("Code copied");
+      } catch {
+        // Clipboard is blocked in some embedded browsers; the code is on
+        // screen either way, so say so rather than failing silently.
+        toast("Couldn't copy — the code is on screen", true);
+      }
+    });
+  }
 }
 
 async function viewLeaderboard(tournamentId) {
@@ -5137,7 +5438,7 @@ async function viewLeaderboard(tournamentId) {
 
     // A match is not a leaderboard — it is one result between two sides — so
     // it gets its own screen rather than a table of two rows.
-    if (fmt.match) return renderMatchBoard(tournament, teams);
+    if (fmt.match) return void (await renderMatchBoard(tournament, teams));
 
     const rows = buildLeaderboard(tournament, teams);
     // Every card signed means the round is over, even if nobody closed it —

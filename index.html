@@ -981,6 +981,29 @@
     margin-top: 10px; text-align: center; font-family: 'Barlow', sans-serif;
     font-weight: 700; font-size: .95rem; line-height: 1.3;
   }
+
+  /* Checkbox row with an explanation under the label. */
+  .checkrow { display: flex; gap: 11px; align-items: flex-start; cursor: pointer; }
+  .checkrow input { margin-top: 3px; width: 18px; height: 18px; flex: none; accent-color: var(--blue); }
+  .cr-t { display: block; font-weight: 600; font-size: .92rem; }
+  .cr-s { display: block; font-size: .78rem; color: var(--ink-2); margin-top: 3px; line-height: 1.45; }
+
+  /* Join code on the match screen, for the people entitled to see it. */
+  .sharecode {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 12px; padding: 9px 12px;
+    background: rgba(255,255,255,.08); border-radius: 9px;
+  }
+  .sc-l { font-size: .7rem; text-transform: uppercase; letter-spacing: .09em; color: rgba(255,255,255,.55); }
+  .sc-v {
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.05rem;
+    letter-spacing: .12em; color: #fff; flex: 1;
+  }
+  .sc-b {
+    background: rgba(255,255,255,.14); color: #fff; border: 0; cursor: pointer;
+    padding: 5px 12px; border-radius: 7px; font-size: .78rem; font-weight: 600;
+  }
+  .sc-b:hover { background: rgba(255,255,255,.22); }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1073,6 +1096,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925t"></script>
+  <script src="app.js?v=20260925w"></script>
 </body>
 </html>
