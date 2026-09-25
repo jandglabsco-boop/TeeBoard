@@ -819,6 +819,7 @@ const routes = [
   { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/billing/, view: () => viewBilling() },
+  { re: /^#\/tournaments$/, view: () => viewTournaments() },
   { re: /^#\/stats$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
   { re: /^#\/privacy$/, view: () => viewLegal("privacy") },
@@ -980,6 +981,10 @@ function route() {
   renderHeaderProfile();
   trackPageView();
   const hash = location.hash || "#/";
+
+  const navTournaments = document.getElementById("nav-tournaments");
+  if (navTournaments) navTournaments.classList.toggle("is-active", hash === "#/tournaments");
+
   for (const r of routes) {
     const m = hash.match(r.re);
     if (m) return r.view(m);
@@ -1556,6 +1561,108 @@ const LEGAL = {
 
 // #/stats — visitor numbers. Restricted to comped (owner) accounts by the
 // teeboard_stats function itself, not just by hiding the link.
+// ---------- TOURNAMENT DIRECTORY ----------
+// A public board of every tournament, live and finished. Anyone can watch;
+// anyone playing in a live one can check in from here rather than needing the
+// code handed to them separately.
+
+async function viewTournaments() {
+  app.innerHTML = loadingHtml();
+
+  // teams(id) rides along so each row can show a field size without a second
+  // round trip per tournament.
+  const { data, error } = await sb
+    .from("tournaments")
+    .select("id, name, course_name, format, num_holes, start_hole, status, join_code, created_at, teams(id)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    app.innerHTML = `
+      <div class="card p-6 mt-4 text-center">
+        <h2 class="text-lg mb-2">Couldn't load tournaments</h2>
+        <p class="text-sm muted mb-4">${escapeHtml(error.message)}</p>
+        <button class="btn-secondary" onclick="location.reload()">Try again</button>
+      </div>`;
+    return;
+  }
+
+  const all = data || [];
+  const live = all.filter((t) => t.status === "active");
+  const past = all.filter((t) => t.status !== "active");
+
+  function row(t) {
+    const fmt = formatOf(t);
+    const teams = (t.teams || []).length;
+    const isLive = t.status === "active";
+    const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
+
+    return `
+      <div class="card p-4 mb-2.5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              ${isLive
+                ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
+                : `<span class="pill">FINAL</span>`}
+              <span class="eyebrow">${when}</span>
+            </div>
+            <div class="display" style="font-size:1.25rem">${escapeHtml(t.name)}</div>
+            ${t.course_name ? `<div class="text-sm muted mt-0.5 truncate">${escapeHtml(t.course_name)}</div>` : ""}
+            <div class="text-xs muted-2 mt-1.5">
+              ${escapeHtml(fmt.label)} · ${holes} · ${teams} ${teams === 1 ? "team" : "teams"}
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-2 mt-3">
+          <a href="#/leaderboard/${t.id}" class="btn-secondary flex-1 text-sm">
+            ${isLive ? "Watch live" : "Leaderboard"}
+          </a>
+          ${isLive
+            // Hands off to the normal join flow with the code already filled
+            // in, so checking in is the same roster search players know.
+            ? `<a href="#/join/${encodeURIComponent(t.join_code)}" class="btn-green flex-1 text-sm">Check in</a>`
+            : ""}
+        </div>
+      </div>`;
+  }
+
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-6 pb-5 mb-4">
+      <div class="eyebrow on-dark mb-2">Tournaments</div>
+      <h1 class="display" style="font-size:2rem;color:#fff">Every round, live and past</h1>
+      <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
+        Watch any leaderboard as it happens. Playing in one? Check in and find your name.
+      </p>
+    </section>
+
+    <div class="flex items-center gap-3 mb-2.5">
+      <span class="eyebrow">Live now${live.length ? ` · ${live.length}` : ""}</span>
+      <span class="flex-1 hairline"></span>
+    </div>
+    ${live.length
+      ? live.map(row).join("")
+      : `<div class="card p-6 text-center mb-4">
+           <div class="font-semibold mb-1">Nothing underway right now</div>
+           <p class="text-sm muted">When a round starts it'll show up here automatically.</p>
+         </div>`}
+
+    <div class="flex items-center gap-3 mt-6 mb-2.5">
+      <span class="eyebrow">Completed${past.length ? ` · ${past.length}` : ""}</span>
+      <span class="flex-1 hairline"></span>
+    </div>
+    ${past.length
+      ? past.map(row).join("")
+      : `<div class="card p-6 text-center">
+           <p class="text-sm muted">No finished rounds yet.</p>
+         </div>`}
+
+    <p class="text-xs muted-2 text-center mt-5">
+      Organizing instead? <a href="#/create" class="link-underline">Start a tournament</a>.
+    </p>
+  `;
+}
+
 async function viewStats() {
   app.innerHTML = loadingHtml();
   const user = await getUser();

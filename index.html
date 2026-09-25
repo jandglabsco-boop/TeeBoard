@@ -104,6 +104,12 @@
   }
   .eyebrow.on-dark { color: rgba(255,255,255,.5); }
 
+  /* Header tab. Reads as chrome until it's the page you're on, then it
+     lights up the way a selected broadcast tab does. */
+  #nav-tournaments { transition: color .15s ease, background .15s ease; }
+  #nav-tournaments:hover { color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); }
+  #nav-tournaments.is-active { color: var(--grass-400); background: rgba(76,203,120,.12); }
+
   .wordmark {
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 700;
@@ -570,6 +576,7 @@
         <span class="wordmark on-dark text-xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></span>
       </a>
       <div class="flex items-center gap-2.5">
+        <a href="#/tournaments" id="nav-tournaments" class="eyebrow on-dark px-2 py-1 rounded-md">Tournaments</a>
         <span id="offline-badge"></span>
         <span id="header-sub"></span>
         <div id="header-profile"></div>
@@ -589,6 +596,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260924a"></script>
+  <script src="app.js?v=20260924b"></script>
 </body>
 </html>
