@@ -359,6 +359,10 @@ const TOURNAMENT_COLS =
   "id, name, course_name, num_holes, par, status, created_at, created_by, " +
   "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in";
 
+// Same list for an embedded select — `teams(*, tournaments(...))`. PostgREST
+// wants no spaces inside the parentheses.
+const TOURNAMENT_COLS_EMBED = TOURNAMENT_COLS.replace(/,\s+/g, ",");
+
 function tournamentPar(tournament) {
   return tournament.par && tournament.par.length === tournament.num_holes
     ? tournament.par
@@ -1213,17 +1217,12 @@ async function viewHome() {
         latest
           ? escapeHtml(`${latest.name}${latest.course_name ? ` · ${latest.course_name}` : ""}`)
           : "One shared card per team. Every phone updates as scores go in."}</div>
-      <div class="tabs">
-        <a href="#/tournaments" class="tab">Rounds</a>
-        <a href="#/players" class="tab">Rankings</a>
-      </div>
+
     </div>
 
     ${latest ? `
       <a href="#/leaderboard/${latest.id}" class="panel mt-3 block">
         <div class="listrow" style="border-bottom:0">
-          <span class="idcrest" style="width:38px;height:38px;font-size:.85rem;background:var(--ink-900);color:#fff">${
-            escapeHtml(latest.name.split(/\s+/).filter(Boolean).slice(0,2).map((w) => w.charAt(0).toUpperCase()).join(""))}</span>
           <span class="min-w-0 flex-1">
             <span class="flex items-center gap-1.5">
               ${latestState === "live"
@@ -1869,9 +1868,11 @@ async function loadCareerStats(force = false) {
   return careerCache;
 }
 
-// Players who actually competed in this mode, ordered by its points.
+// Players who actually competed in this mode, ordered by its points, with
+// genuine ties marked. Four players off the same winning team hold the same
+// record, so listing them 1-2-3-4 invents an order that doesn't exist.
 function rankedFor(players, mode) {
-  return players
+  const list = players
     .filter((p) => p.byMode[mode].rounds > 0)
     .map((p) => ({ ...p, m: p.byMode[mode] }))
     .sort((a, b) =>
@@ -1879,6 +1880,19 @@ function rankedFor(players, mode) {
       b.m.wins - a.m.wins ||
       a.toPar - b.toPar ||
       a.name.localeCompare(b.name));
+
+  // Same points and same wins is inseparable. Places skip afterwards, so a
+  // four-way tie for 1st is followed by 5th, as a leaderboard does.
+  const same = (a, b) => a.m.points === b.m.points && a.m.wins === b.m.wins;
+  let place = 0;
+  list.forEach((p, i) => {
+    if (i === 0 || !same(list[i - 1], p)) place = i + 1;
+    p.rank = place;
+  });
+  list.forEach((p, i) => {
+    p.tiedRank = list.some((o, j) => j !== i && o.rank === p.rank);
+  });
+  return list;
 }
 
 // ---------- TOURNAMENT DIRECTORY ----------
@@ -1923,8 +1937,6 @@ async function viewTournaments() {
     const isLive = state === "live";
     const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
-    const initials = t.name.split(/\s+/).filter(Boolean).slice(0, 2)
-      .map((w) => w.charAt(0).toUpperCase()).join("");
 
     // One line of information rather than a card with a heading, a
     // subheading and two buttons. Tapping the row watches it; checking in
@@ -1932,7 +1944,6 @@ async function viewTournaments() {
     return `
       <div class="listrow">
         <a href="#/leaderboard/${t.id}" class="flex items-center gap-3 min-w-0 flex-1">
-          <span class="idcrest" style="width:36px;height:36px;font-size:.82rem;background:var(--ink-900);color:#fff">${escapeHtml(initials)}</span>
           <span class="min-w-0">
             <span class="flex items-center gap-1.5">
               ${isLive ? `<span class="pill live"><span class="dot"></span>LIVE</span>` : ""}
@@ -1956,7 +1967,6 @@ async function viewTournaments() {
       <div class="idsub">${live.length} live · ${past.length} completed</div>
       <div class="tabs">
         <span class="tab is-on">Rounds</span>
-        <a href="#/players" class="tab">Rankings</a>
       </div>
     </div>
 
@@ -2005,13 +2015,17 @@ async function viewPlayers(modeRaw) {
       <div class="idname" style="font-size:1.3rem">Order of merit</div>
       <div class="idsub">Season from ${escapeHtml(seasonLabel)}</div>
       <div class="tabs">
-        <a href="#/tournaments" class="tab">Rounds</a>
         ${Object.entries(RANKING_MODES).map(([key, m]) =>
           `<a href="#/players/${key}" class="tab${key === mode ? " is-on" : ""}">${m.label}</a>`).join("")}
       </div>
     </div>
 
-    <p class="text-xs muted-2 mt-3 mb-1">${escapeHtml(RANKING_MODES[mode].blurb)}</p>
+    <div class="flex items-center gap-2 mt-3 mb-2">
+      <input id="player-search" type="search" inputmode="search" autocomplete="off"
+             placeholder="Search players" aria-label="Search players"
+             style="flex:1;padding:.5rem .7rem;font-size:.85rem" />
+    </div>
+    <p class="text-xs muted-2 mb-2">${escapeHtml(RANKING_MODES[mode].blurb)}</p>
 
     ${ranked.length === 0 ? `
       <div class="panel p-6 text-center mt-2">
@@ -2030,22 +2044,25 @@ async function viewPlayers(modeRaw) {
             </tr>
           </thead>
           <tbody>
-            ${ranked.map((p, i) => `
-              <tr class="tap" onclick="location.hash='#/player/${encodeURIComponent(p.key)}'">
-                <td class="l pos">${i + 1}</td>
+            ${ranked.map((p) => `
+              <tr class="tap prow" data-name="${escapeHtml(p.name.toLowerCase())}"
+                  onclick="location.hash='#/player/${encodeURIComponent(p.key)}'">
+                <td class="l pos">${p.tiedRank ? "T" : ""}${p.rank}</td>
                 <td class="l" style="max-width:0">
                   <div class="nm truncate">${escapeHtml(p.name)}</div>
                   <div class="sub truncate">
                     ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
                   </div>
                 </td>
-                <td class="rule"><span class="chip ${i === 0 ? "lead" : ""}">${Math.round(p.m.points)}</span></td>
+                <td class="rule"><span class="chip">${Math.round(p.m.points)}</span></td>
                 <td class="rule num" style="font-weight:600">${p.m.wins || "–"}</td>
                 <td class="rule num" style="color:var(--ink-2)">${p.m.rounds}</td>
               </tr>`).join("")}
           </tbody>
         </table>
       </div>
+
+      <p id="search-empty" class="hidden text-sm muted text-center p-6">No player by that name.</p>
 
       <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
         1st is worth ${PLACE_POINTS[0]} points, 2nd ${PLACE_POINTS[1]}, 3rd ${PLACE_POINTS[2]}, down to
@@ -2054,6 +2071,25 @@ async function viewPlayers(modeRaw) {
         team on the board scores no points.
       </p>`}
   `;
+
+  // Filtering in the page rather than refetching: the whole season is
+  // already here, and a golfer looking for their own name expects it to
+  // narrow as they type.
+  const search = document.getElementById("player-search");
+  if (search) {
+    const rows = [...app.querySelectorAll(".prow")];
+    const empty = document.getElementById("search-empty");
+    search.addEventListener("input", () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+      rows.forEach((r) => {
+        const hit = !q || r.dataset.name.includes(q);
+        r.style.display = hit ? "" : "none";
+        if (hit) shown++;
+      });
+      if (empty) empty.classList.toggle("hidden", shown > 0);
+    });
+  }
 }
 
 // ---------- PLAYER PROFILE ----------
@@ -2079,23 +2115,19 @@ async function viewPlayer(keyRaw) {
   const scoringHoles = p.holesPlayed || 1;
   const pct = (n) => `${Math.round((n / scoringHoles) * 100)}%`;
   const rankIn = (mode) => {
-    const i = rankedFor(players, mode).findIndex((x) => x.key === key);
-    return i === -1 ? null : i + 1;
+    const row = rankedFor(players, mode).find((x) => x.key === key);
+    return row ? { rank: row.rank, tied: row.tiedRank } : null;
   };
   const scrambleRank = rankIn("scramble");
   const individualRank = rankIn("individual");
-  const bestRank = scrambleRank && individualRank
-    ? Math.min(scrambleRank, individualRank)
-    : (scrambleRank || individualRank);
+  const best = [scrambleRank, individualRank].filter(Boolean)
+    .sort((a, b) => a.rank - b.rank)[0] || null;
+  const bestRank = best ? `${best.tied ? "T" : ""}${best.rank}` : null;
 
-
-  const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2)
-    .map((w) => w.charAt(0).toUpperCase()).join("");
 
   app.innerHTML = `
     <div class="idband">
       <div class="idband-top">
-        <div class="idcrest">${escapeHtml(initials)}</div>
         <div class="idband-meta">
           ${bestRank ? `<span class="pill on-dark">#${bestRank} THIS SEASON</span>` : ""}
           <div class="idname">${escapeHtml(p.name)}</div>
@@ -2120,7 +2152,8 @@ async function viewPlayer(keyRaw) {
         <tbody>
           ${Object.entries(RANKING_MODES).map(([key, m]) => {
             const ms = p.byMode[key];
-            const r = key === "scramble" ? scrambleRank : individualRank;
+            const rr = key === "scramble" ? scrambleRank : individualRank;
+            const r = rr ? `${rr.tied ? "T" : ""}${rr.rank}` : null;
             return `
               <tr class="tap" onclick="location.hash='#/players/${key}'">
                 <td class="l">
@@ -2173,7 +2206,7 @@ async function viewPlayer(keyRaw) {
                 </div>
               </td>
               <td class="rule" style="width:4rem">
-                <span class="chip ${h.toPar < 0 ? "under" : h.toPar === 0 ? "even" : ""}">${h.thru ? toParLabel(h.toPar) : "–"}</span>
+                <span class="chip ${h.toPar < 0 ? "under" : h.toPar === 0 ? "even" : "over"}">${h.thru ? toParLabel(h.toPar) : "–"}</span>
               </td>
               <td class="rule num" style="width:3.4rem;color:var(--ink-2)">${Math.round(h.points)}</td>
             </tr>`).join("")}
@@ -4198,7 +4231,11 @@ async function renderTeamStep(tournament) {
 async function viewTeam(teamId) {
   app.innerHTML = loadingHtml();
 
-  const { data: team, error: teamErr } = await sb.from("teams").select("*, tournaments(*)").eq("id", teamId).single();
+  // `tournaments(*)` is refused for anonymous players now that join_code is
+  // not readable by them — and this is the scoring screen, which has to work
+  // without an account. Name the columns instead.
+  const { data: team, error: teamErr } = await sb.from("teams")
+    .select(`*, tournaments(${TOURNAMENT_COLS_EMBED})`).eq("id", teamId).single();
   if (teamErr || !team) {
     app.innerHTML = notFoundHtml("Team");
     return;
@@ -4549,11 +4586,6 @@ async function viewLeaderboard(tournamentId) {
     // No status pill in the header: the identity band below states it, and
     // saying FINAL twice on one screen is how a layout starts looking padded.
 
-    // Initials for the crest block — a tournament has no logo, but the
-    // shape of one anchors the band the way a team badge does.
-    const initials = tournament.name.split(/\s+/).filter(Boolean)
-      .slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("");
-
     const metaBits = [
       fmt.label,
       `${tournament.num_holes} holes`,
@@ -4565,7 +4597,6 @@ async function viewLeaderboard(tournamentId) {
     app.innerHTML = `
       <div class="idband">
         <div class="idband-top">
-          <div class="idcrest">${escapeHtml(initials)}</div>
           <div class="idband-meta">
             <div class="flex items-center gap-1.5">
               ${state === "live"
@@ -4634,7 +4665,7 @@ async function viewLeaderboard(tournamentId) {
                 if (!r.thru) chip = `<span class="chip none">—</span>`;
                 else if (fmt.metric === "points") chip = `<span class="chip">${r.points}</span>`;
                 else if (fmt.metric === "skins") chip = `<span class="chip ${r.skins ? "" : "none"}">${r.skins}</span>`;
-                else chip = `<span class="chip ${r.toPar < 0 ? "under" : r.toPar === 0 ? "even" : ""}">${toParLabel(r.toPar)}</span>`;
+                else chip = `<span class="chip ${r.toPar < 0 ? "under" : r.toPar === 0 ? "even" : "over"}">${toParLabel(r.toPar)}</span>`;
                 return `
                 <tr class="tap" onclick="location.hash='#/scorecard/${r.teamId || r.id}'">
                   <td class="l pos">${r.tied ? "T" : ""}${r.place}</td>
@@ -4685,7 +4716,7 @@ async function viewScorecard(teamId) {
 
   const { data: team, error } = await sb
     .from("teams")
-    .select("*, tournaments(*), team_members(player_name)")
+    .select(`*, tournaments(${TOURNAMENT_COLS_EMBED}), team_members(player_name)`)
     .eq("id", teamId)
     .single();
   if (error || !team) {
