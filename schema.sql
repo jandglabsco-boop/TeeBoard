@@ -487,3 +487,12 @@ as $$
   select * from tournaments where join_code = upper(btrim(p_code)) limit 1;
 $$;
 grant execute on function public.player_find_tournament(text) to anon, authenticated;
+
+-- Admin role. Deleting tournaments was removed outright after six weeks of
+-- Thursday rounds were destroyed by it; this brings it back for an
+-- administrator only, so cleanup is possible without handing every organizer
+-- a way to erase a league's history. There is still no DELETE policy on the
+-- table, so admin_delete_tournament is the only route and it checks first.
+alter table organizer_billing add column if not exists is_admin boolean not null default false;
+-- is_teeboard_admin(), admin_list_organizers() and admin_delete_tournament(uuid)
+-- applied via migration add_admin_role_with_tournament_deletion; see git.

@@ -30,9 +30,15 @@ const headerSub = document.getElementById("header-sub");
 // event is the only reliable signal — it has to be subscribed before the
 // client finishes processing the URL.
 let isPasswordRecovery = false;
+// Declared up here because the auth listener below clears it, and that
+// listener can fire synchronously while the client initialises.
+let adminIsAdmin = null;
 if (sb) {
   sb.auth.onAuthStateChange((event) => {
     if (event === "PASSWORD_RECOVERY") isPasswordRecovery = true;
+    // Whoever is signed in has changed, so a cached "is this an admin" answer
+    // now belongs to somebody else.
+    if (event === "SIGNED_IN" || event === "SIGNED_OUT") adminIsAdmin = null;
   });
 }
 
@@ -307,10 +313,42 @@ function allCardsSigned(teams) {
   return played.every((t) => !!t.signed_at);
 }
 
+// A round of golf happens in one sitting. Scoring that stopped a day ago
+// means it's over, whatever the status column says — otherwise a tournament
+// somebody abandoned on the 4th tee in July is still advertised as live in
+// September, which is exactly what the board was doing.
+const LIVE_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+function lastScoreAt(teams) {
+  let latest = 0;
+  (teams || []).forEach((t) => (t.scores || []).forEach((s) => {
+    const ts = s.updated_at ? new Date(s.updated_at).getTime() : 0;
+    if (ts > latest) latest = ts;
+  }));
+  return latest || null;
+}
+
+/**
+ * "live"         — being scored right now
+ * "completed"    — closed by the organizer, or every started card signed
+ * "unfinished"   — was scored, never signed, and has gone quiet
+ * "never_started"— created and abandoned without a single score
+ */
+function tournamentState(tournament, teams) {
+  if (!tournament) return "never_started";
+  if (tournament.status !== "active") return "completed";
+
+  const played = (teams || []).filter((t) => (t.scores || []).length > 0);
+  if (!played.length) {
+    const age = Date.now() - new Date(tournament.created_at).getTime();
+    return age < LIVE_WINDOW_MS ? "live" : "never_started";
+  }
+  if (played.every((t) => !!t.signed_at)) return "completed";
+  return Date.now() - (lastScoreAt(teams) || 0) < LIVE_WINDOW_MS ? "live" : "unfinished";
+}
+
 function tournamentFinished(tournament, teams) {
-  if (!tournament) return false;
-  if (tournament.status !== "active") return true;   // organizer closed it
-  return allCardsSigned(teams);
+  return tournamentState(tournament, teams) !== "live";
 }
 
 // Every tournament column except join_code. Anonymous visitors have no read
@@ -812,6 +850,9 @@ async function renderHeaderProfile() {
         <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
         ${IS_NATIVE_APP ? "" : `<a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>`}
         <a href="#/stats" class="btn-secondary w-full text-sm mb-2">Site traffic</a>
+        ${(await isTeeboardAdmin())
+          ? `<a href="#/users" class="btn-secondary w-full text-sm mb-2">Users &amp; tournaments</a>`
+          : ""}
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -851,6 +892,7 @@ const routes = [
   { re: /^#\/players$/, view: () => viewPlayers() },
   { re: /^#\/players\/(scramble|individual)$/, view: (m) => viewPlayers(m[1]) },
   { re: /^#\/player\/(.+)$/, view: (m) => viewPlayer(m[1]) },
+  { re: /^#\/users$/, view: () => viewUsers() },
   { re: /^#\/stats$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
   { re: /^#\/privacy$/, view: () => viewLegal("privacy") },
@@ -1815,7 +1857,7 @@ async function viewTournaments() {
     .from("tournaments")
     // signed_at and the score ids are what decide whether a round is still
     // running, so they have to come back with the list.
-    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, teams(id, signed_at, scores(id))")
+    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, teams(id, signed_at, scores(id, updated_at))")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1829,15 +1871,18 @@ async function viewTournaments() {
   }
 
   const all = data || [];
-  // A round with every card signed belongs under Completed, not Live, even
-  // if the organizer never got round to closing it.
-  const live = all.filter((t) => !tournamentFinished(t, t.teams));
-  const past = all.filter((t) => tournamentFinished(t, t.teams));
+  // Tournaments nobody ever scored in are left off the public board
+  // entirely. They are not rounds; they are abandoned drafts, and a board
+  // full of them is what made a dozen dead tournaments look live.
+  const shown = all.filter((t) => tournamentState(t, t.teams) !== "never_started");
+  const live = shown.filter((t) => tournamentState(t, t.teams) === "live");
+  const past = shown.filter((t) => tournamentState(t, t.teams) !== "live");
 
   function row(t) {
     const fmt = formatOf(t);
     const teams = (t.teams || []).length;
-    const isLive = !tournamentFinished(t, t.teams);
+    const state = tournamentState(t, t.teams);
+    const isLive = state === "live";
     const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
 
@@ -1848,7 +1893,7 @@ async function viewTournaments() {
             <div class="flex items-center gap-2 mb-1">
               ${isLive
                 ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
-                : `<span class="pill">COMPLETED</span>`}
+                : `<span class="pill">${state === "unfinished" ? "UNFINISHED" : "COMPLETED"}</span>`}
               <span class="eyebrow">${when}</span>
             </div>
             <div class="display" style="font-size:1.25rem">${escapeHtml(t.name)}</div>
@@ -2131,6 +2176,126 @@ async function viewPlayer(keyRaw) {
       name share a profile, and the same person entered differently counts twice.
     </p>
   `;
+}
+
+// ---------- ADMIN: USERS ----------
+// Deleting a tournament lives here and nowhere else. There is no DELETE
+// policy on the table, so even a forged client can't get at it — every
+// delete goes through admin_delete_tournament, which checks the caller.
+
+async function isTeeboardAdmin() {
+  if (adminIsAdmin !== null) return adminIsAdmin;
+  const { data } = await sb.rpc("is_teeboard_admin");
+  adminIsAdmin = !!data;
+  return adminIsAdmin;
+}
+
+async function viewUsers() {
+  app.innerHTML = loadingHtml();
+
+  const { data, error } = await sb.rpc("admin_list_organizers");
+  if (error) {
+    app.innerHTML = `
+      <section class="panel-dark px-5 pt-6 pb-6 mb-3">
+        <div class="eyebrow on-dark mb-2">Restricted</div>
+        <h1 class="display" style="font-size:2rem;color:#fff">Admins only</h1>
+        <p class="mt-3 text-[15px]" style="color:rgba(255,255,255,.6)">
+          This page is for account administrators.
+        </p>
+      </section>
+      <a href="#/" class="btn-secondary w-full">Back to TeeBoard</a>`;
+    return;
+  }
+
+  const users = data || [];
+  const totalTournaments = users.reduce((n, u) => n + Number(u.tournament_count || 0), 0);
+
+  function tRow(t, email) {
+    const scores = Number(t.scores || 0);
+    const label = scores === 0
+      ? `<span class="pill">NEVER STARTED</span>`
+      : t.status !== "active"
+        ? `<span class="pill">CLOSED</span>`
+        : `<span class="pill">${scores} scores</span>`;
+    return `
+      <div class="flex items-center gap-2 py-2.5" style="border-top:1px solid var(--line)">
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-semibold truncate">${escapeHtml(t.name)}</div>
+          <div class="text-[11px] muted-2">
+            ${new Date(t.created_at).toLocaleDateString()} · ${t.teams} team${Number(t.teams) === 1 ? "" : "s"} · ${scores} score${scores === 1 ? "" : "s"}
+          </div>
+        </div>
+        ${label}
+        <a href="#/leaderboard/${t.id}" class="btn-ghost text-xs shrink-0">View</a>
+        <button class="btn-danger text-xs shrink-0 admin-del"
+                data-id="${escapeHtml(t.id)}"
+                data-name="${escapeHtml(t.name)}"
+                data-scores="${scores}"
+                data-email="${escapeHtml(email || "")}">Delete</button>
+      </div>`;
+  }
+
+  app.innerHTML = `
+    <section class="panel-dark px-5 pt-6 pb-5 mb-4">
+      <div class="eyebrow on-dark mb-2">Admin</div>
+      <h1 class="display" style="font-size:2rem;color:#fff">Users</h1>
+      <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
+        ${users.length} account${users.length === 1 ? "" : "s"} · ${totalTournaments} tournament${totalTournaments === 1 ? "" : "s"}
+      </p>
+    </section>
+
+    ${users.map((u) => `
+      <div class="card p-4 mb-2.5">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-semibold text-sm truncate">${escapeHtml(u.full_name || u.email)}</div>
+            <div class="text-[11px] muted-2 truncate">${escapeHtml(u.email)}</div>
+            <div class="text-[11px] muted-2 mt-1">
+              Joined ${new Date(u.created_at).toLocaleDateString()} ·
+              ${u.tournament_count} tournament${Number(u.tournament_count) === 1 ? "" : "s"}
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 shrink-0">
+            ${u.is_admin ? `<span class="pill open">ADMIN</span>` : ""}
+            ${u.is_exempt ? `<span class="pill">FREE</span>` : ""}
+          </div>
+        </div>
+        ${(u.tournaments || []).length
+          ? `<div class="mt-2">${(u.tournaments || []).map((t) => tRow(t, u.email)).join("")}</div>`
+          : `<p class="text-xs muted-2 mt-2">No tournaments.</p>`}
+      </div>`).join("")}
+
+    <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
+      Deleting a tournament removes its teams, players and scores permanently,
+      and takes those rounds out of the player rankings. There is no undo.
+    </p>
+  `;
+
+  app.querySelectorAll(".admin-del").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const { id, name, scores } = btn.dataset;
+      const n = Number(scores || 0);
+      // Anything with scores in it is somebody's round. Make that explicit
+      // rather than letting a stray tap erase a night of golf.
+      const warning = n > 0
+        ? `Delete "${name}"?\n\nThis round has ${n} score${n === 1 ? "" : "s"} recorded. Deleting removes its teams, players and scores permanently and takes it out of the rankings.\n\nThis cannot be undone.`
+        : `Delete "${name}"?\n\nNothing was ever scored in it. This cannot be undone.`;
+      if (!confirm(warning)) return;
+
+      btn.disabled = true;
+      btn.textContent = "Deleting…";
+      const { data: deleted, error: delErr } = await sb.rpc("admin_delete_tournament", { p_id: id });
+      if (delErr) {
+        toast("Couldn't delete: " + (delErr.message || delErr), true);
+        btn.disabled = false;
+        btn.textContent = "Delete";
+        return;
+      }
+      toast(`Deleted "${deleted || name}"`);
+      careerCache = null;         // rankings no longer include it
+      viewUsers();
+    });
+  });
 }
 
 async function viewStats() {
@@ -4364,8 +4529,10 @@ async function viewLeaderboard(tournamentId) {
 
     const rows = buildLeaderboard(tournament, teams);
     const fmt = formatOf(tournament);
-    // Every card signed means the round is over, even if nobody closed it.
-    const finished = tournamentFinished(tournament, teams);
+    // Every card signed means the round is over, even if nobody closed it —
+    // and so does scoring that stopped days ago.
+    const state = tournamentState(tournament, teams);
+    const finished = state !== "live";
     const isLive = !finished;
     const pot = fmt.metric === "skins" ? skinsPayout(tournament, rows) : null;
 
@@ -4383,7 +4550,7 @@ async function viewLeaderboard(tournamentId) {
         <div class="flex items-center gap-2 mt-4 pt-3.5" style="border-top:1px solid rgba(255,255,255,.09)">
           <span class="pill on-dark">${escapeHtml(fmt.label)}</span>
           <span class="pill on-dark">${tournament.num_holes} holes</span>
-          ${finished ? `<span class="pill on-dark">Completed</span>` : ""}
+          ${finished ? `<span class="pill on-dark">${state === "unfinished" ? "Unfinished" : "Completed"}</span>` : ""}
         </div>
       </section>
 
@@ -4457,7 +4624,11 @@ async function viewLeaderboard(tournamentId) {
       </div>
 
       <div class="flex items-center justify-center gap-2 mt-3.5">
-        <span class="eyebrow">${finished ? "Tournament completed" : "Updating live as scores come in"}</span>
+        <span class="eyebrow">${
+          state === "live" ? "Updating live as scores come in"
+          : state === "unfinished" ? "Scoring stopped — cards were never signed"
+          : state === "never_started" ? "No scores were entered"
+          : "Tournament completed"}</span>
       </div>
       <p class="text-center text-xs muted-2 mt-2">
         ${fmt.metric === "points" ? "Most points wins"
