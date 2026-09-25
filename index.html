@@ -25,14 +25,18 @@
      direct sunlight on a course.
      ============================================================ */
   :root {
-    /* One dark, used for the top bar and the identity band alike, so the
-       chrome reads as a single surface instead of two shades of almost the
-       same thing. Green stays the brand and interaction colour. */
-    --ink-900: #151A1F;
-    --navy:    #151A1F;
-    --ink-800: #1D242B;
-    --ink-700: #28313A;
-    --ink-600: #36424E;
+    /* Same structure as the reference board, our own colours. Graphite
+       chrome instead of navy, and the brand green carries actions where
+       theirs uses blue. Variable names kept so the components are unchanged. */
+    --ink-900: #0F1317;   /* top bar, footer */
+    --navy:    #171E25;   /* bands and card heads */
+    --navy-lo: #232D37;   /* card gradient foot */
+    --ink-800: #1D262F;
+    --ink-700: #2A3540;
+    --ink-600: #3A4754;
+    --blue:    #23883F;   /* actions — the brand green */
+    --blue-2:  #1B6C33;
+    --blue-lo: #E7F6EB;
 
     /* light surfaces + text */
     --paper:   #F1F3F5;
@@ -658,21 +662,22 @@
   .dtable .num { font-variant-numeric: tabular-nums; }
 
   /* Score as a filled chip rather than loose text, so the eye lands on it. */
-  /* A score is a number, not a button. Filled lozenges everywhere were
-     what made the board look like a row of pills; colour carries the
-     meaning and the weight carries the emphasis. */
+  /* Filled score badge, the shape the reference uses. Colour is ours: red
+     under par, graphite at level or over. Green stays an action colour —
+     a green score would read as "good" on a number that isn't. */
   .chip {
-    display: inline-block;
+    display: inline-block; min-width: 2.6rem;
+    padding: 4px 9px; border-radius: 6px;
     font-family: 'Barlow', sans-serif; font-weight: 700;
-    font-size: 1.15rem; line-height: 1.1;
+    font-size: .95rem; line-height: 1.2; text-align: center;
     font-variant-numeric: tabular-nums;
-    color: var(--ink);
+    background: var(--ink-700); color: #fff;
   }
-  .chip.under { color: var(--under); }
-  .chip.even  { color: var(--ink-2); }
-  .chip.over  { color: var(--ink-2); }
-  .chip.none  { color: var(--ink-3); font-weight: 600; font-size: 1rem; }
-  .chip.lead  { color: var(--ink); }
+  .chip.under { background: var(--under); }
+  .chip.even  { background: var(--ink-700); }
+  .chip.over  { background: var(--ink-700); }
+  .chip.none  { background: #E8ECF1; color: var(--ink-3); }
+  .chip.lead  { background: var(--ink-700); }
 
   .sectionbar {
     display: flex; align-items: baseline; gap: 10px;
@@ -700,13 +705,93 @@
     border-radius: var(--radius);
     overflow: hidden;
   }
+
+  /* Segmented control — the Teams / Players switch on their cards. */
+  .seg {
+    display: inline-flex; background: #E9EDF2; border-radius: 999px; padding: 3px;
+  }
+  .seg a, .seg span {
+    padding: 6px 18px; border-radius: 999px;
+    font-size: .82rem; font-weight: 600; color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .seg .on { background: var(--navy); color: #fff; }
+
+  /* Tournament card: navy head, white table foot. */
+  .tcard {
+    background: var(--surface);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    margin-bottom: 14px;
+  }
+  .tcard-head {
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-lo) 100%);
+    color: #fff; padding: 14px 16px 16px;
+  }
+  .tcard-name { font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.05rem; line-height: 1.2; }
+  .tcard-date { font-size: .76rem; color: rgba(255,255,255,.62); margin-top: 5px; }
+  .tcard-body { padding: 12px 14px 14px; }
+
+  .pill.men   { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .pill.onair { background: #E8262F; border-color: #E8262F; color: #fff; }
+
+  /* Filter row above the board. */
+  .filters { display: flex; gap: 8px; margin: 12px 0 4px; }
+  .filters select, .filters input {
+    flex: 1; min-width: 0;
+    padding: .55rem .7rem; font-size: .84rem;
+    border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface);
+  }
+
+  .navlink {
+    padding: 7px 12px; border-radius: 7px;
+    font-size: .88rem; font-weight: 600; color: rgba(255,255,255,.66);
+    white-space: nowrap; transition: color .15s ease, background .15s ease;
+  }
+  .navlink:hover { color: #fff; background: rgba(255,255,255,.07); }
+  .navlink.is-on { color: #fff; background: rgba(255,255,255,.11); }
+  #mainnav::-webkit-scrollbar { display: none; }
+
+  .navbtn {
+    background: var(--blue); color: #fff;
+    padding: 8px 16px; border-radius: 8px;
+    font-size: .85rem; font-weight: 600; white-space: nowrap;
+  }
+  .navbtn:hover { background: var(--blue-2); }
+
+  .foot-h {
+    font-size: .8rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: rgba(255,255,255,.55); margin-bottom: 12px;
+  }
+  .foot-a {
+    display: block; font-size: .85rem; color: rgba(255,255,255,.82);
+    margin-bottom: 9px; line-height: 1.45;
+  }
+  a.foot-a:hover { color: #fff; text-decoration: underline; }
+
+  /* Page-level tabs sit on the page, not on a dark band. */
+  .tabs.pagetabs { margin: 0 0 2px; border-bottom: 1px solid var(--line); gap: 4px; }
+  .tabs.pagetabs .tab { color: var(--ink-2); border-radius: 8px 8px 0 0; padding: 9px 18px; }
+  .tabs.pagetabs .tab:hover { color: var(--ink); background: rgba(0,0,0,.03); }
+  .tabs.pagetabs .tab.is-on {
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line); border-bottom-color: var(--surface);
+    margin-bottom: -1px;
+  }
+
+  /* Card grid — one column on a phone, filling out on a wide screen the way
+     the reference board does. */
+  .cardgrid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 640px)  { .cardgrid { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1024px) { .cardgrid { grid-template-columns: repeat(3, 1fr); } }
 </style>
 </head>
 <body class="min-h-screen">
 
-  <header class="sticky top-0 z-30" style="background: var(--ink-900); border-bottom: 1px solid rgba(255,255,255,.08);">
-    <div class="max-w-lg mx-auto px-4 h-14 flex items-center justify-between">
-      <a href="#/" class="flex items-center gap-2.5">
+  <header class="sticky top-0 z-30" style="background: var(--ink-900); border-bottom: 1px solid rgba(255,255,255,.06);">
+    <div class="mx-auto px-4 flex items-center gap-5" style="max-width:76rem;height:60px">
+      <a href="#/" class="flex items-center gap-2.5 shrink-0">
         <svg width="24" height="24" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M38 24 L74 34 L38 44 Z" fill="#4CCB78" />
           <rect x="32" y="20" width="6.5" height="60" rx="3.25" fill="#ffffff" />
@@ -714,9 +799,19 @@
         </svg>
         <span class="wordmark on-dark text-xl"><span class="wm-tee">TEE</span><span class="wm-board">BOARD</span></span>
       </a>
-      <div class="flex items-center gap-2.5">
-        <a href="#/tournaments" id="nav-tournaments" class="eyebrow on-dark px-2 py-1 rounded-md">Tournaments</a>
-        <a href="#/players" id="nav-players" class="eyebrow on-dark px-2 py-1 rounded-md">Players</a>
+
+      <!-- Horizontal nav, sentence case, the way the reference bar reads.
+           Scrolls sideways on a phone rather than collapsing behind a menu:
+           these are four links, not a site map. -->
+      <nav id="mainnav" class="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto"
+           style="scrollbar-width:none">
+        <a href="#/" data-nav="#/" class="navlink">Home</a>
+        <a href="#/tournaments" data-nav="#/tournaments" class="navlink">Tournaments</a>
+        <a href="#/players" data-nav="#/players" class="navlink">Rankings</a>
+      </nav>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <a href="#/join" class="navbtn">Check in</a>
         <span id="offline-badge"></span>
         <span id="header-sub"></span>
         <div id="header-profile"></div>
@@ -724,18 +819,37 @@
     </div>
   </header>
 
-  <main id="app" class="max-w-lg mx-auto px-4 pt-4 pb-14"></main>
+  <main id="app" class="mx-auto px-4 pt-4 pb-14" style="max-width:76rem"></main>
 
-  <footer class="max-w-lg mx-auto px-4 pb-8">
-    <div class="hairline pt-4 flex items-center justify-center gap-4">
-      <a href="#/terms" class="eyebrow">Terms</a>
-      <a href="#/privacy" class="eyebrow">Privacy</a>
-      <span class="eyebrow">TeeBoard by J&amp;G Labs</span>
-      <a href="#/refunds" class="eyebrow">Refunds</a>
+  <footer style="background: var(--ink-900); color:#fff; margin-top: 40px;">
+    <div class="mx-auto px-4 py-10 grid gap-8"
+         style="max-width:76rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))">
+      <div>
+        <div class="foot-h">Information</div>
+        <a href="#/players" class="foot-a">Player rankings</a>
+        <a href="#/tournaments" class="foot-a">Tournaments</a>
+        <a href="#/privacy" class="foot-a">Privacy policy</a>
+        <a href="#/terms" class="foot-a">Terms of service</a>
+      </div>
+      <div>
+        <div class="foot-h">Organizers</div>
+        <a href="#/create" class="foot-a">Create a tournament</a>
+        <a href="#/join" class="foot-a">Check in</a>
+        <a href="#/refunds" class="foot-a">Refund policy</a>
+      </div>
+      <div>
+        <div class="foot-h">Contact</div>
+        <span class="foot-a" style="cursor:default">TeeBoard by J&amp;G Labs</span>
+        <a href="mailto:jandglabsco@gmail.com" class="foot-a">jandglabsco@gmail.com</a>
+      </div>
+      <div>
+        <div class="foot-h">TeeBoard</div>
+        <span class="foot-a" style="cursor:default">Live scoring for scrambles<br />and small tournaments.</span>
+      </div>
     </div>
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925i"></script>
+  <script src="app.js?v=20260925l"></script>
 </body>
 </html>

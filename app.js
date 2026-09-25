@@ -892,7 +892,8 @@ const routes = [
   { re: /^#\/join$/, view: () => viewJoin() },
   { re: /^#\/reset$/, view: () => viewResetPassword() },
   { re: /^#\/billing/, view: () => viewBilling() },
-  { re: /^#\/tournaments$/, view: () => viewTournaments() },
+  { re: /^#\/tournaments$/, view: () => viewTournaments("current") },
+  { re: /^#\/tournaments\/(current|results)$/, view: (m) => viewTournaments(m[1]) },
   { re: /^#\/players$/, view: () => viewPlayers() },
   { re: /^#\/players\/(scramble|individual)$/, view: (m) => viewPlayers(m[1]) },
   { re: /^#\/player\/(.+)$/, view: (m) => viewPlayer(m[1]) },
@@ -1059,10 +1060,14 @@ function route() {
   trackPageView();
   const hash = location.hash || "#/";
 
-  const navTournaments = document.getElementById("nav-tournaments");
-  if (navTournaments) navTournaments.classList.toggle("is-active", hash === "#/tournaments");
-  const navPlayers = document.getElementById("nav-players");
-  if (navPlayers) navPlayers.classList.toggle("is-active", hash.startsWith("#/player"));
+  // Highlight whichever nav entry owns this screen.
+  document.querySelectorAll("#mainnav .navlink").forEach((a) => {
+    const target = a.dataset.nav;
+    const on = target === "#/"
+      ? hash === "#/" || hash === ""
+      : hash.startsWith(target) || (target === "#/players" && hash.startsWith("#/player"));
+    a.classList.toggle("is-on", on);
+  });
 
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -1900,7 +1905,7 @@ function rankedFor(players, mode) {
 // anyone playing in a live one can check in from here rather than needing the
 // code handed to them separately.
 
-async function viewTournaments() {
+async function viewTournaments(tab) {
   app.innerHTML = loadingHtml();
 
   // teams(id) rides along so each row can show a field size without a second
@@ -1909,7 +1914,10 @@ async function viewTournaments() {
     .from("tournaments")
     // signed_at and the score ids are what decide whether a round is still
     // running, so they have to come back with the list.
-    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, teams(id, signed_at, scores(id, updated_at))")
+    // Everything buildLeaderboard needs, so each card can show the top of
+    // its own board without a second request per tournament.
+    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, par, handicap, skins_buy_in, " +
+            "teams(id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id, updated_at))")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1930,62 +1938,123 @@ async function viewTournaments() {
   const live = shown.filter((t) => tournamentState(t, t.teams) === "live");
   const past = shown.filter((t) => tournamentState(t, t.teams) !== "live");
 
-  function row(t) {
+  // Card per tournament: navy head carrying the identity, white foot
+  // carrying the top of the board — the shape the reference uses so you can
+  // read a round without opening it.
+  function card(t) {
     const fmt = formatOf(t);
-    const teams = (t.teams || []).length;
+    const teamCount = (t.teams || []).length;
     const state = tournamentState(t, t.teams);
     const isLive = state === "live";
-    const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
+    const when = new Date(t.created_at).toLocaleDateString(undefined,
+      { month: "short", day: "numeric", year: "numeric" });
 
-    // One line of information rather than a card with a heading, a
-    // subheading and two buttons. Tapping the row watches it; checking in
-    // is the only thing that needs its own control.
+    const rows = (t.rows || []).slice(0, 5);
+
     return `
-      <div class="listrow">
-        <a href="#/leaderboard/${t.id}" class="flex items-center gap-3 min-w-0 flex-1">
-          <span class="min-w-0">
-            <span class="flex items-center gap-1.5">
-              ${isLive ? `<span class="pill live"><span class="dot"></span>LIVE</span>` : ""}
-              <span class="font-semibold text-sm truncate">${escapeHtml(t.name)}</span>
-            </span>
-            <span class="sub block truncate mt-0.5" style="font-size:.72rem;color:var(--ink-3)">
-              ${escapeHtml(when)} · ${escapeHtml(fmt.label)} · ${holes} · ${teams} team${teams === 1 ? "" : "s"}${
-                state === "unfinished" ? " · unfinished" : ""}
-            </span>
-          </span>
-        </a>
-        ${isLive
-          ? `<a href="#/join" class="btn-green text-xs shrink-0" style="padding:.5rem .8rem">Check in</a>`
-          : `<span class="text-xs shrink-0" style="color:var(--ink-3)">${icon("arrow", 14)}</span>`}
+      <div class="tcard">
+        <div class="tcard-head">
+          <div class="flex items-center justify-between gap-2 mb-2.5">
+            <span class="pill men">${escapeHtml(fmt.label)}</span>
+            ${isLive
+              ? `<span class="pill onair"><span class="dot"></span>LIVE</span>`
+              : `<span class="pill on-dark">${state === "unfinished" ? "UNFINISHED" : "FINAL"}</span>`}
+          </div>
+          <a href="#/leaderboard/${t.id}" class="tcard-name block">${escapeHtml(t.name)}</a>
+          <div class="tcard-date">
+            ${escapeHtml(when)} &nbsp;•&nbsp; ${t.num_holes} holes
+            ${t.course_name ? ` &nbsp;•&nbsp; ${escapeHtml(t.course_name)}` : ""}
+          </div>
+        </div>
+        <div class="tcard-body">
+          <div class="seg mb-3">
+            <span class="on">${fmt.ranks === "player" ? "Players" : "Teams"}</span>
+            <a href="#/leaderboard/${t.id}">Full board</a>
+          </div>
+          ${rows.length ? `
+            <table class="dtable" style="border-radius:8px;overflow:hidden">
+              <thead>
+                <tr>
+                  <th class="l" style="width:2.2rem">#</th>
+                  <th class="l">${fmt.ranks === "player" ? "Player" : "Team"}</th>
+                  <th class="rule" style="width:4rem">Score</th>
+                  <th class="rule" style="width:3.4rem">Thru</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map((r) => `
+                  <tr class="tap" onclick="location.hash='#/leaderboard/${t.id}'">
+                    <td class="l pos">${r.tied ? "T" : ""}${r.place}</td>
+                    <td class="l" style="max-width:0"><div class="nm truncate">${escapeHtml(r.name)}</div></td>
+                    <td class="rule"><span class="chip ${r.toPar < 0 ? "under" : "even"}">${r.thru ? toParLabel(r.toPar) : "–"}</span></td>
+                    <td class="rule num" style="color:var(--ink-2)">${r.thru || "–"}/${t.num_holes}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+            ${teamCount > rows.length
+              ? `<a href="#/leaderboard/${t.id}" class="block text-center text-xs mt-2.5"
+                    style="color:var(--blue);font-weight:600">View full leaderboard</a>` : ""}
+          ` : `<p class="text-sm muted text-center py-3">No scores yet.</p>`}
+        </div>
       </div>`;
   }
 
+  // Top of each board, so a card can show the leaders without another fetch.
+  shown.forEach((t) => { t.rows = buildLeaderboard(t, t.teams || []); });
+
+  const boards = { current: live, results: past };
+  const active = boards[tab] ? tab : "current";
+  const list = boards[active];
+
   app.innerHTML = `
-    <div class="idband">
-      <div class="idname" style="font-size:1.3rem">Tournaments</div>
-      <div class="idsub">${live.length} live · ${past.length} completed</div>
-      <div class="tabs">
-        <span class="tab is-on">Rounds</span>
-      </div>
+    <div class="tabs pagetabs">
+      <a href="#/tournaments" class="tab${active === "current" ? " is-on" : ""}">Current</a>
+      <a href="#/tournaments/results" class="tab${active === "results" ? " is-on" : ""}">Results</a>
     </div>
 
-    ${live.length ? `
-      <div class="sectionbar"><span class="t">Live now</span><span class="rule"></span><span class="n">${live.length}</span></div>
-      <div class="panel">${live.map(row).join("")}</div>` : `
-      <div class="sectionbar"><span class="t">Live now</span><span class="rule"></span></div>
-      <div class="panel p-5 text-center">
-        <p class="text-sm muted">Nothing underway. Rounds appear here as they're scored.</p>
-      </div>`}
+    <div class="filters">
+      <select id="filter-format">
+        <option value="">All formats</option>
+        ${Object.entries(FORMATS).map(([k, f]) =>
+          `<option value="${k}">${escapeHtml(f.label)}</option>`).join("")}
+      </select>
+      <input id="filter-search" type="search" placeholder="Search" aria-label="Search tournaments" autocomplete="off" />
+    </div>
 
-    ${past.length ? `
-      <div class="sectionbar"><span class="t">Completed</span><span class="rule"></span><span class="n">${past.length}</span></div>
-      <div class="panel">${past.map(row).join("")}</div>` : ""}
-
-    <p class="text-xs muted-2 text-center mt-5">
-      Organizing instead? <a href="#/create" class="link-underline">Start a tournament</a>.
-    </p>
+    <div id="tcards" class="cardgrid">
+      ${list.length
+        ? list.map(card).join("")
+        : `<div class="panel p-8 text-center" style="grid-column:1/-1">
+             <p class="text-sm muted">${active === "current"
+               ? "Nothing underway. Rounds appear here as they're scored."
+               : "No completed rounds yet."}</p>
+           </div>`}
+    </div>
+    <p id="tfilter-empty" class="hidden text-sm muted text-center p-6">Nothing matches that.</p>
   `;
+
+  // Filtering happens in the page — everything shown is already loaded, and
+  // the list is short enough that a round trip per keystroke would be silly.
+  const q = document.getElementById("filter-search");
+  const fmtSel = document.getElementById("filter-format");
+  const cards = [...app.querySelectorAll("#tcards .tcard")];
+  const empty = document.getElementById("tfilter-empty");
+
+  function applyFilters() {
+    const text = (q.value || "").trim().toLowerCase();
+    const want = fmtSel.value;
+    let shownN = 0;
+    cards.forEach((el, i) => {
+      const t = list[i];
+      const hay = `${t.name} ${t.course_name || ""}`.toLowerCase();
+      const hit = (!text || hay.includes(text)) && (!want || t.format === want);
+      el.style.display = hit ? "" : "none";
+      if (hit) shownN++;
+    });
+    if (empty) empty.classList.toggle("hidden", shownN > 0 || !cards.length);
+  }
+  if (q) q.addEventListener("input", applyFilters);
+  if (fmtSel) fmtSel.addEventListener("change", applyFilters);
 }
 
 // ---------- PLAYER RANKINGS ----------
