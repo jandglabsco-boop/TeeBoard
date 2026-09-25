@@ -1165,6 +1165,19 @@ async function viewHome() {
   const teams = myTeams();
   const teamEntries = Object.entries(teams);
 
+  // The landing page shows golf, not a logo. Whatever is being played right
+  // now — or was played last — is the most useful thing to put in front of
+  // somebody opening the site.
+  const { data: recent } = await sb
+    .from("tournaments")
+    .select("id, name, course_name, format, num_holes, status, created_at, teams(id, signed_at, scores(id, updated_at))")
+    .order("created_at", { ascending: false })
+    .limit(6);
+  const candidates = (recent || []).filter((t) => tournamentState(t, t.teams) !== "never_started");
+  const latest = candidates.find((t) => tournamentState(t, t.teams) === "live") || candidates[0] || null;
+  const latestState = latest ? tournamentState(latest, latest.teams) : null;
+  const latestTeams = latest ? (latest.teams || []).length : 0;
+
   // Only ever what this account actually created. Nothing device-local feeds
   // this list, so signing in on someone else's phone shows you your own
   // tournaments and nothing of theirs.
@@ -1191,15 +1204,40 @@ async function viewHome() {
 
   app.innerHTML = `
     ${trialBannerHtml(billing)}
-    <section class="panel-dark px-5 pt-6 pb-6 mb-2.5">
-      <div class="eyebrow on-dark mb-3">Live scramble scoring</div>
-      <h1 class="wordmark on-dark" style="font-size:3.2rem">
-        <span class="wm-tee">TEE</span><span class="wm-board">BOARD</span>
-      </h1>
-      <p class="mt-3 text-[15px]" style="color:rgba(255,255,255,.6);max-width:21rem">
-        One shared card per team. Every phone updates the second a score goes in.
-      </p>
-    </section>
+    <div class="idband">
+      <div class="idname" style="font-size:1.35rem">${
+        latest
+          ? (latestState === "live" ? "Playing now" : "Latest round")
+          : "Live scramble scoring"}</div>
+      <div class="idsub">${
+        latest
+          ? escapeHtml(`${latest.name}${latest.course_name ? ` · ${latest.course_name}` : ""}`)
+          : "One shared card per team. Every phone updates as scores go in."}</div>
+      <div class="tabs">
+        <a href="#/tournaments" class="tab">Rounds</a>
+        <a href="#/players" class="tab">Rankings</a>
+      </div>
+    </div>
+
+    ${latest ? `
+      <a href="#/leaderboard/${latest.id}" class="panel mt-3 block">
+        <div class="listrow" style="border-bottom:0">
+          <span class="idcrest" style="width:38px;height:38px;font-size:.85rem;background:var(--ink-900);color:#fff">${
+            escapeHtml(latest.name.split(/\s+/).filter(Boolean).slice(0,2).map((w) => w.charAt(0).toUpperCase()).join(""))}</span>
+          <span class="min-w-0 flex-1">
+            <span class="flex items-center gap-1.5">
+              ${latestState === "live"
+                ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
+                : `<span class="pill">FINAL</span>`}
+              <span class="font-semibold text-sm truncate">${escapeHtml(latest.name)}</span>
+            </span>
+            <span class="block truncate mt-0.5" style="font-size:.72rem;color:var(--ink-3)">
+              ${latestTeams} team${latestTeams === 1 ? "" : "s"} · ${escapeHtml(formatOf(latest).label)} · ${latest.num_holes} holes
+            </span>
+          </span>
+          <span class="shrink-0" style="color:var(--ink-3)">${icon("arrow", 16)}</span>
+        </div>
+      </a>` : ""}
 
     <div class="grid grid-cols-1 gap-2.5 mb-2">
       <a href="#/join" class="row-link">
@@ -1885,68 +1923,54 @@ async function viewTournaments() {
     const isLive = state === "live";
     const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
+    const initials = t.name.split(/\s+/).filter(Boolean).slice(0, 2)
+      .map((w) => w.charAt(0).toUpperCase()).join("");
 
+    // One line of information rather than a card with a heading, a
+    // subheading and two buttons. Tapping the row watches it; checking in
+    // is the only thing that needs its own control.
     return `
-      <div class="card p-4 mb-2.5">
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              ${isLive
-                ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
-                : `<span class="pill">${state === "unfinished" ? "UNFINISHED" : "COMPLETED"}</span>`}
-              <span class="eyebrow">${when}</span>
-            </div>
-            <div class="display" style="font-size:1.25rem">${escapeHtml(t.name)}</div>
-            ${t.course_name ? `<div class="text-sm muted mt-0.5 truncate">${escapeHtml(t.course_name)}</div>` : ""}
-            <div class="text-xs muted-2 mt-1.5">
-              ${escapeHtml(fmt.label)} · ${holes} · ${teams} ${teams === 1 ? "team" : "teams"}
-            </div>
-          </div>
-        </div>
-        <div class="flex gap-2 mt-3">
-          <a href="#/leaderboard/${t.id}" class="btn-secondary flex-1 text-sm">
-            ${isLive ? "Watch live" : "Leaderboard"}
-          </a>
-          ${isLive
-            // Deliberately no code in this link. The board is public, so
-            // carrying the code here would let anyone browsing walk into any
-            // round and start entering scores. The code comes from the
-            // organizer; this just opens the box to type it into.
-            ? `<a href="#/join" class="btn-green flex-1 text-sm">Check in</a>`
-            : ""}
-        </div>
+      <div class="listrow">
+        <a href="#/leaderboard/${t.id}" class="flex items-center gap-3 min-w-0 flex-1">
+          <span class="idcrest" style="width:36px;height:36px;font-size:.82rem;background:var(--ink-900);color:#fff">${escapeHtml(initials)}</span>
+          <span class="min-w-0">
+            <span class="flex items-center gap-1.5">
+              ${isLive ? `<span class="pill live"><span class="dot"></span>LIVE</span>` : ""}
+              <span class="font-semibold text-sm truncate">${escapeHtml(t.name)}</span>
+            </span>
+            <span class="sub block truncate mt-0.5" style="font-size:.72rem;color:var(--ink-3)">
+              ${escapeHtml(when)} · ${escapeHtml(fmt.label)} · ${holes} · ${teams} team${teams === 1 ? "" : "s"}${
+                state === "unfinished" ? " · unfinished" : ""}
+            </span>
+          </span>
+        </a>
+        ${isLive
+          ? `<a href="#/join" class="btn-green text-xs shrink-0" style="padding:.5rem .8rem">Check in</a>`
+          : `<span class="text-xs shrink-0" style="color:var(--ink-3)">${icon("arrow", 14)}</span>`}
       </div>`;
   }
 
   app.innerHTML = `
-    <section class="panel-dark px-5 pt-6 pb-5 mb-4">
-      <div class="eyebrow on-dark mb-2">Tournaments</div>
-      <h1 class="display" style="font-size:2rem;color:#fff">Every round, live and past</h1>
-      <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
-        Watch any leaderboard as it happens. Playing in one? Check in and find your name.
-      </p>
-    </section>
-
-    <div class="flex items-center gap-3 mb-2.5">
-      <span class="eyebrow">Live now${live.length ? ` · ${live.length}` : ""}</span>
-      <span class="flex-1 hairline"></span>
+    <div class="idband">
+      <div class="idname" style="font-size:1.3rem">Tournaments</div>
+      <div class="idsub">${live.length} live · ${past.length} completed</div>
+      <div class="tabs">
+        <span class="tab is-on">Rounds</span>
+        <a href="#/players" class="tab">Rankings</a>
+      </div>
     </div>
-    ${live.length
-      ? live.map(row).join("")
-      : `<div class="card p-6 text-center mb-4">
-           <div class="font-semibold mb-1">Nothing underway right now</div>
-           <p class="text-sm muted">When a round starts it'll show up here automatically.</p>
-         </div>`}
 
-    <div class="flex items-center gap-3 mt-6 mb-2.5">
-      <span class="eyebrow">Completed${past.length ? ` · ${past.length}` : ""}</span>
-      <span class="flex-1 hairline"></span>
-    </div>
-    ${past.length
-      ? past.map(row).join("")
-      : `<div class="card p-6 text-center">
-           <p class="text-sm muted">No finished rounds yet.</p>
-         </div>`}
+    ${live.length ? `
+      <div class="sectionbar"><span class="t">Live now</span><span class="rule"></span><span class="n">${live.length}</span></div>
+      <div class="panel">${live.map(row).join("")}</div>` : `
+      <div class="sectionbar"><span class="t">Live now</span><span class="rule"></span></div>
+      <div class="panel p-5 text-center">
+        <p class="text-sm muted">Nothing underway. Rounds appear here as they're scored.</p>
+      </div>`}
+
+    ${past.length ? `
+      <div class="sectionbar"><span class="t">Completed</span><span class="rule"></span><span class="n">${past.length}</span></div>
+      <div class="panel">${past.map(row).join("")}</div>` : ""}
 
     <p class="text-xs muted-2 text-center mt-5">
       Organizing instead? <a href="#/create" class="link-underline">Start a tournament</a>.
@@ -1976,57 +2000,51 @@ async function viewPlayers(modeRaw) {
   const seasonLabel = new Date(SEASON_START + "T00:00:00Z")
     .toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 
-  const tabs = Object.entries(RANKING_MODES).map(([key, m]) => `
-    <a href="#/players/${key}" class="flex-1 text-center py-2.5 rounded-lg text-sm font-semibold
-       ${key === mode ? "" : "muted"}"
-       style="${key === mode
-         ? "background:var(--ink-900);color:#fff"
-         : "background:var(--surface);border:1px solid var(--line)"}">
-      ${m.label}
-    </a>`).join("");
-
   app.innerHTML = `
-    <section class="panel-dark px-5 pt-6 pb-5 mb-3">
-      <div class="eyebrow on-dark mb-2">Rankings</div>
-      <h1 class="display" style="font-size:2rem;color:#fff">Order of merit</h1>
-      <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
-        Season began ${escapeHtml(seasonLabel)}. Tap anyone for their card.
-      </p>
-    </section>
+    <div class="idband">
+      <div class="idname" style="font-size:1.3rem">Order of merit</div>
+      <div class="idsub">Season from ${escapeHtml(seasonLabel)}</div>
+      <div class="tabs">
+        <a href="#/tournaments" class="tab">Rounds</a>
+        ${Object.entries(RANKING_MODES).map(([key, m]) =>
+          `<a href="#/players/${key}" class="tab${key === mode ? " is-on" : ""}">${m.label}</a>`).join("")}
+      </div>
+    </div>
 
-    <div class="flex gap-2 mb-2">${tabs}</div>
-    <p class="text-xs muted-2 text-center mb-3">${escapeHtml(RANKING_MODES[mode].blurb)}</p>
+    <p class="text-xs muted-2 mt-3 mb-1">${escapeHtml(RANKING_MODES[mode].blurb)}</p>
 
     ${ranked.length === 0 ? `
-      <div class="card p-6 text-center">
+      <div class="panel p-6 text-center mt-2">
         <div class="font-semibold mb-1">No ${escapeHtml(RANKING_MODES[mode].label.toLowerCase())} rounds yet this season</div>
         <p class="text-sm muted">Rankings appear once scores go in.</p>
       </div>` : `
-      <div class="card overflow-hidden">
-        <div class="lb-head flex items-center px-3 py-2">
-          <span style="width:2.5rem"></span>
-          <span class="flex-1 eyebrow on-dark">Player</span>
-          <span class="eyebrow on-dark text-right" style="width:3.2rem">Pts</span>
-          <span class="eyebrow on-dark text-right" style="width:2.6rem">Wins</span>
-          <span class="eyebrow on-dark text-right" style="width:3rem">Rds</span>
-        </div>
-        ${ranked.map((p, i) => `
-          <a href="#/player/${encodeURIComponent(p.key)}"
-             class="lb-row flex items-center px-3 py-3 ${i === ranked.length - 1 ? "" : "border-b"}"
-             style="border-color:var(--line)">
-            <span style="width:2.5rem">
-              <span class="rank${i === 0 ? " lead" : ""}">${i + 1}</span>
-            </span>
-            <span class="flex-1 min-w-0 pr-2">
-              <span class="font-semibold text-sm block truncate">${escapeHtml(p.name)}</span>
-              <span class="text-[11px] muted-2">
-                ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
-              </span>
-            </span>
-            <span class="num-display text-right" style="width:3.2rem;font-size:1.15rem">${Math.round(p.m.points)}</span>
-            <span class="num text-right text-sm font-semibold" style="width:2.6rem">${p.m.wins || "–"}</span>
-            <span class="num text-right text-sm muted" style="width:3rem">${p.m.rounds}</span>
-          </a>`).join("")}
+      <div class="panel mt-2">
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th class="l" style="width:2.4rem">#</th>
+              <th class="l">Player</th>
+              <th class="rule" style="width:3.4rem">Pts</th>
+              <th class="rule" style="width:2.8rem">W</th>
+              <th class="rule" style="width:2.8rem">Rds</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ranked.map((p, i) => `
+              <tr class="tap" onclick="location.hash='#/player/${encodeURIComponent(p.key)}'">
+                <td class="l pos">${i + 1}</td>
+                <td class="l" style="max-width:0">
+                  <div class="nm truncate">${escapeHtml(p.name)}</div>
+                  <div class="sub truncate">
+                    ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
+                  </div>
+                </td>
+                <td class="rule"><span class="chip ${i === 0 ? "lead" : ""}">${Math.round(p.m.points)}</span></td>
+                <td class="rule num" style="font-weight:600">${p.m.wins || "–"}</td>
+                <td class="rule num" style="color:var(--ink-2)">${p.m.rounds}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
       </div>
 
       <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
@@ -2070,106 +2088,98 @@ async function viewPlayer(keyRaw) {
     ? Math.min(scrambleRank, individualRank)
     : (scrambleRank || individualRank);
 
-  function markCell(label, value, cls) {
-    return `
-      <div class="text-center px-1 py-3">
-        <div class="hole-mark ${cls} mx-auto mb-1.5" style="width:34px;height:34px;line-height:34px;font-size:.95rem">${value}</div>
-        <div class="eyebrow" style="font-size:.65rem">${label}</div>
-        <div class="text-[11px] muted-2">${pct(value)}</div>
-      </div>`;
-  }
+
+  const initials = p.name.split(/\s+/).filter(Boolean).slice(0, 2)
+    .map((w) => w.charAt(0).toUpperCase()).join("");
 
   app.innerHTML = `
-    <a href="#/players" class="btn-ghost mb-3">${icon("arrow", 13, "rotate-180")} All players</a>
-
-    <section class="panel-dark px-5 pt-6 pb-5 mb-3">
-      <div class="eyebrow on-dark mb-1">${bestRank ? `#${bestRank} this season` : "Player"}</div>
-      <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(p.name)}</h1>
-      <div class="flex gap-7 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
-        <div>
-          <div class="num-display" style="font-size:1.6rem;color:${p.wins ? "var(--gold)" : "#fff"}">${p.wins}</div>
-          <div class="eyebrow on-dark">Wins</div>
-        </div>
-        <div>
-          <div class="num-display" style="font-size:1.6rem;color:#fff">${p.rounds}</div>
-          <div class="eyebrow on-dark">Rounds</div>
-        </div>
-        <div>
-          <div class="num-display" style="font-size:1.6rem;color:#fff">${p.bestFinish ?? "–"}</div>
-          <div class="eyebrow on-dark">Best</div>
+    <div class="idband">
+      <div class="idband-top">
+        <div class="idcrest">${escapeHtml(initials)}</div>
+        <div class="idband-meta">
+          ${bestRank ? `<span class="pill on-dark">#${bestRank} THIS SEASON</span>` : ""}
+          <div class="idname">${escapeHtml(p.name)}</div>
+          <div class="idsub">${p.rounds} round${p.rounds === 1 ? "" : "s"} · ${p.holesPlayed} holes</div>
         </div>
       </div>
-    </section>
-
-    <!-- The two competitions are scored separately, so show them separately
-         rather than a single total that matches neither board. -->
-    <div class="flex gap-2.5 mb-1">
-      ${Object.entries(RANKING_MODES).map(([key, m]) => {
-        const ms = p.byMode[key];
-        const r = key === "scramble" ? scrambleRank : individualRank;
-        return `
-          <a href="#/players/${key}" class="card p-4 flex-1">
-            <div class="eyebrow mb-1">${m.label}</div>
-            ${ms.rounds === 0
-              ? `<div class="text-sm muted-2">No rounds yet</div>`
-              : `<div class="num-display" style="font-size:1.5rem">${Math.round(ms.points)}<span class="text-xs muted ml-1" style="font-family:Archivo">pts</span></div>
-                 <div class="text-[11px] muted-2 mt-0.5">
-                   ${r ? `#${r} · ` : ""}${ms.wins} win${ms.wins === 1 ? "" : "s"} · ${ms.rounds} round${ms.rounds === 1 ? "" : "s"}
-                 </div>`}
-          </a>`;
-      }).join("")}
-    </div>
-
-    <div class="flex items-center gap-3 mt-5 mb-2.5">
-      <span class="eyebrow">Scoring · ${p.holesPlayed} holes</span>
-      <span class="flex-1 hairline"></span>
-    </div>
-    <div class="card grid grid-cols-5 divide-x" style="border-color:var(--line)">
-      ${markCell("Eagles", p.eagles, "eagle")}
-      ${markCell("Birdies", p.birdies, "birdie")}
-      ${markCell("Pars", p.pars, "")}
-      ${markCell("Bogeys", p.bogeys, "bogey")}
-      ${markCell("Doubles+", p.doubles, "double-bogey")}
-    </div>
-
-    <div class="card p-4 mt-2.5 flex items-center justify-between">
-      <div>
-        <div class="eyebrow">Podiums</div>
-        <div class="text-sm muted">Top-three finishes</div>
+      <div class="statstrip">
+        <div><div class="v" style="color:${p.wins ? "var(--gold)" : "#fff"}">${p.wins}</div><div class="k">Wins</div></div>
+        <div><div class="v" style="color:#fff">${p.podiums}</div><div class="k">Top 3</div></div>
+        <div><div class="v" style="color:#fff">${p.bestFinish ?? "–"}</div><div class="k">Best</div></div>
+        <div><div class="v" style="color:#fff">${p.avgFinish ? p.avgFinish.toFixed(1) : "–"}</div><div class="k">Avg</div></div>
       </div>
-      <div class="num-display" style="font-size:1.5rem">${p.podiums}</div>
-    </div>
-    <div class="card p-4 mt-2.5 flex items-center justify-between">
-      <div>
-        <div class="eyebrow">Average finish</div>
-        <div class="text-sm muted">Across ${p.rounds} round${p.rounds === 1 ? "" : "s"}</div>
+      <div class="tabs">
+        <a href="#/players" class="tab">Rankings</a>
+        <span class="tab is-on">Card</span>
       </div>
-      <div class="num-display" style="font-size:1.5rem">${p.avgFinish ? p.avgFinish.toFixed(1) : "–"}</div>
     </div>
 
-    <div class="flex items-center gap-3 mt-6 mb-2.5">
-      <span class="eyebrow">Rounds</span>
-      <span class="flex-1 hairline"></span>
+    <div class="sectionbar"><span class="t">Points</span><span class="rule"></span></div>
+    <div class="panel">
+      <table class="dtable">
+        <tbody>
+          ${Object.entries(RANKING_MODES).map(([key, m]) => {
+            const ms = p.byMode[key];
+            const r = key === "scramble" ? scrambleRank : individualRank;
+            return `
+              <tr class="tap" onclick="location.hash='#/players/${key}'">
+                <td class="l">
+                  <div class="nm">${m.label}</div>
+                  <div class="sub">${ms.rounds === 0 ? "No rounds yet"
+                    : `${r ? `#${r} · ` : ""}${ms.wins} win${ms.wins === 1 ? "" : "s"} · ${ms.rounds} round${ms.rounds === 1 ? "" : "s"}`}</div>
+                </td>
+                <td class="rule" style="width:4rem">
+                  ${ms.rounds === 0 ? `<span class="chip none">—</span>` : `<span class="chip">${Math.round(ms.points)}</span>`}
+                </td>
+              </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
     </div>
-    ${p.history.map((h) => `
-      <a href="#/leaderboard/${h.tournamentId}" class="card p-4 mb-2.5 flex items-center gap-3">
-        <span class="rank${h.place === 1 && h.contested ? " lead" : ""}${h.tied ? " tied" : ""}" style="flex-shrink:0">
-          ${h.tied ? "T" : ""}${h.place}
-        </span>
-        <span class="flex-1 min-w-0">
-          <span class="font-semibold text-sm block truncate">${escapeHtml(h.name)}</span>
-          <span class="text-[11px] muted-2">
-            ${escapeHtml(h.format)} · ${new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-            ${h.contested ? "" : " · unopposed"}
-          </span>
-        </span>
-        <span class="text-right">
-          <span class="num-display block" style="font-size:1.2rem;color:${h.toPar < 0 ? "var(--under)" : "var(--ink)"}">
-            ${h.thru ? toParLabel(h.toPar) : "–"}
-          </span>
-          <span class="text-[11px] muted-2">${Math.round(h.points)} pts</span>
-        </span>
-      </a>`).join("")}
+
+    <div class="sectionbar"><span class="t">Scoring</span><span class="rule"></span><span class="n">${p.holesPlayed} holes</span></div>
+    <div class="panel">
+      <table class="dtable">
+        <tbody>
+          ${[
+            ["Eagles", p.eagles, "eagle"],
+            ["Birdies", p.birdies, "birdie"],
+            ["Pars", p.pars, ""],
+            ["Bogeys", p.bogeys, "bogey"],
+            ["Doubles+", p.doubles, "double-bogey"],
+          ].map(([label, n, cls]) => `
+            <tr>
+              <td class="l" style="width:2.6rem">
+                <span class="hole-mark ${cls}" style="width:26px;height:26px;line-height:26px;font-size:.8rem">${n}</span>
+              </td>
+              <td class="l nm">${label}</td>
+              <td class="rule num" style="width:4rem;color:var(--ink-2)">${pct(n)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sectionbar"><span class="t">Rounds</span><span class="rule"></span><span class="n">${p.history.length}</span></div>
+    <div class="panel">
+      <table class="dtable">
+        <tbody>
+          ${p.history.map((h) => `
+            <tr class="tap" onclick="location.hash='#/leaderboard/${h.tournamentId}'">
+              <td class="l pos">${h.tied ? "T" : ""}${h.place}</td>
+              <td class="l" style="max-width:0">
+                <div class="nm truncate">${escapeHtml(h.name)}</div>
+                <div class="sub truncate">
+                  ${escapeHtml(h.format)} · ${new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}${h.contested ? "" : " · unopposed"}
+                </div>
+              </td>
+              <td class="rule" style="width:4rem">
+                <span class="chip ${h.toPar < 0 ? "under" : h.toPar === 0 ? "even" : ""}">${h.thru ? toParLabel(h.toPar) : "–"}</span>
+              </td>
+              <td class="rule num" style="width:3.4rem;color:var(--ink-2)">${Math.round(h.points)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
 
     <p class="text-xs muted-2 text-center mt-4 leading-relaxed">
       Players are matched by the name on the roster. Two people with the same
@@ -4536,107 +4546,120 @@ async function viewLeaderboard(tournamentId) {
     const isLive = !finished;
     const pot = fmt.metric === "skins" ? skinsPayout(tournament, rows) : null;
 
-    // Set here rather than before the fetch, because whether it's live
-    // depends on the cards we just loaded.
-    headerSub.innerHTML = finished
-      ? `<span class="pill on-dark">Final</span>`
-      : `<span class="pill live"><span class="dot"></span>Live</span>`;
+    // No status pill in the header: the identity band below states it, and
+    // saying FINAL twice on one screen is how a layout starts looking padded.
+
+    // Initials for the crest block — a tournament has no logo, but the
+    // shape of one anchors the band the way a team badge does.
+    const initials = tournament.name.split(/\s+/).filter(Boolean)
+      .slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("");
+
+    const metaBits = [
+      fmt.label,
+      `${tournament.num_holes} holes`,
+      tournament.course_name || null,
+    ].filter(Boolean);
+
+    const scoreHead = fmt.metric === "points" ? "Pts" : fmt.metric === "skins" ? "Skins" : "Score";
 
     app.innerHTML = `
-      <section class="panel-dark px-5 pt-5 pb-5 mb-2.5">
-        <div class="eyebrow on-dark mb-2">Leaderboard</div>
-        <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(tournament.name)}</h1>
-        ${tournament.course_name ? `<p class="text-sm mt-2" style="color:rgba(255,255,255,.55)">${escapeHtml(tournament.course_name)}</p>` : ""}
-        <div class="flex items-center gap-2 mt-4 pt-3.5" style="border-top:1px solid rgba(255,255,255,.09)">
-          <span class="pill on-dark">${escapeHtml(fmt.label)}</span>
-          <span class="pill on-dark">${tournament.num_holes} holes</span>
-          ${finished ? `<span class="pill on-dark">${state === "unfinished" ? "Unfinished" : "Completed"}</span>` : ""}
+      <div class="idband">
+        <div class="idband-top">
+          <div class="idcrest">${escapeHtml(initials)}</div>
+          <div class="idband-meta">
+            <div class="flex items-center gap-1.5">
+              ${state === "live"
+                ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
+                : `<span class="pill on-dark">${state === "unfinished" ? "UNFINISHED" : "FINAL"}</span>`}
+            </div>
+            <div class="idname">${escapeHtml(tournament.name)}</div>
+            <div class="idsub">${escapeHtml(metaBits.join(" · "))}</div>
+          </div>
         </div>
-      </section>
+        <div class="tabs">
+          <span class="tab is-on">${fmt.ranks === "player" ? "Players" : "Teams"}</span>
+          <a href="#/tournaments" class="tab">All rounds</a>
+        </div>
+      </div>
 
       ${pot && pot.buyIn > 0 ? `
-        <div class="card p-4 mb-2.5">
-          <div class="flex items-center justify-between mb-3">
+        <div class="panel p-4 mt-3">
+          <div class="flex items-center justify-between mb-2.5">
             <span class="eyebrow">Skins pot</span>
-            <span class="eyebrow">${money(pot.buyIn)} × ${pot.entrants} player${pot.entrants === 1 ? "" : "s"}</span>
+            <span class="text-xs muted-2">${money(pot.buyIn)} × ${pot.entrants} player${pot.entrants === 1 ? "" : "s"}</span>
           </div>
-          <div class="grid grid-cols-3 gap-3">
+          <div class="flex gap-7">
             <div>
-              <div class="num-display" style="font-size:1.7rem">${money(pot.pot)}</div>
-              <div class="eyebrow mt-1">In the pot</div>
+              <div class="num-display" style="font-size:1.5rem">${money(pot.pot)}</div>
+              <div class="eyebrow mt-0.5">In the pot</div>
             </div>
             <div>
-              <div class="num-display" style="font-size:1.7rem">${pot.skinsWon}</div>
-              <div class="eyebrow mt-1">Skins won</div>
+              <div class="num-display" style="font-size:1.5rem">${pot.skinsWon}</div>
+              <div class="eyebrow mt-0.5">Skins won</div>
             </div>
             <div>
-              <div class="num-display" style="font-size:1.7rem;color:var(--grass-700)">
+              <div class="num-display" style="font-size:1.5rem;color:var(--grass-700)">
                 ${pot.skinsWon ? money(pot.perSkin) : "—"}
               </div>
-              <div class="eyebrow mt-1">Per skin</div>
+              <div class="eyebrow mt-0.5">Per skin</div>
             </div>
           </div>
-          ${!pot.skinsWon ? `
-            <p class="text-xs muted-2 mt-3">Every hole has been halved so far — nothing paid out yet, and the pot keeps carrying.</p>
-          ` : ""}
+          ${!pot.skinsWon ? `<p class="text-xs muted-2 mt-2.5">Every hole halved so far — the pot keeps carrying.</p>` : ""}
         </div>` : ""}
 
-      <div class="card overflow-hidden">
-        <div class="lb-head">
-          <span></span>
-          <span>${fmt.ranks === "player" ? "Player" : "Team"}</span>
-          <span class="text-right">${fmt.metric === "points" ? "Pts" : fmt.metric === "skins" ? "Skins" : "Score"}</span>
-          <span class="text-right">Thru</span>
-        </div>
-        ${rows.length === 0 ? `
-          <div class="p-8 text-center">
-            <div class="mx-auto mb-3 flex items-center justify-center" style="color:var(--ink-3)">${icon("users", 30)}</div>
-            <p class="font-semibold mb-1">No teams yet</p>
-            <p class="text-sm muted">Players join with the code from the organizer.</p>
-          </div>` : ""}
-        ${rows.map((r) => {
-          const leading = r.place === 1 && r.thru > 0;
-          return `
-          <a href="#/scorecard/${r.teamId || r.id}" class="lb-row${leading ? " leader" : ""}">
-            <span class="rank${leading ? " lead" : ""}${r.tied ? " tied" : ""}">${r.tied ? "T" : ""}${r.place}</span>
-            <span class="min-w-0">
-              <span class="font-bold block truncate">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Scorecard signed &amp; submitted">F</span>` : ""}</span>
-              ${r.players.length
-                ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.players.join(" · "))}</span>`
-                : r.teamName
-                  ? `<span class="text-xs muted-2 block truncate mt-0.5">${escapeHtml(r.teamName)}${r.handicap != null ? ` · hcp ${r.handicap}` : ""}</span>`
-                  : ""}
-            </span>
-            <span class="text-right">
-              ${!r.thru ? `<span class="muted-2">—</span>`
-                : fmt.metric === "points" ? `<span class="num-display" style="font-size:1.65rem">${r.points}</span>`
-                : fmt.metric === "skins" ? `
-                    <span class="num-display" style="font-size:1.65rem;color:${r.skins ? "var(--grass-700)" : "var(--ink-3)"}">${r.skins}</span>
-                    ${pot && pot.perSkin && r.skins
-                      ? `<span class="eyebrow block" style="color:var(--grass-700)">${money(r.skins * pot.perSkin)}</span>` : ""}`
-                : `<span class="to-par ${toParClass(r.toPar)}" style="font-size:1.65rem">${toParLabel(r.toPar)}</span>`}
-            </span>
-            <span class="text-right num-display muted" style="font-size:1.15rem">
-              ${r.thru || "–"}<span class="text-xs muted-2">/${tournament.num_holes}</span>
-            </span>
-          </a>`;
-        }).join("")}
-      </div>
+      ${rows.length === 0 ? `
+        <div class="panel p-8 text-center mt-3">
+          <p class="font-semibold mb-1">No teams yet</p>
+          <p class="text-sm muted">Players join with the code from the organizer.</p>
+        </div>` : `
+        <div class="panel mt-3">
+          <table class="dtable">
+            <thead>
+              <tr>
+                <th class="l" style="width:2.4rem">#</th>
+                <th class="l">${fmt.ranks === "player" ? "Player" : "Team"}</th>
+                <th class="rule" style="width:4.2rem">${scoreHead}</th>
+                <th class="rule" style="width:3.6rem">Thru</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r) => {
+                const leading = r.place === 1 && r.thru > 0;
+                const sub = r.players.length
+                  ? r.players.join(" · ")
+                  : r.teamName
+                    ? `${r.teamName}${r.handicap != null ? ` · hcp ${r.handicap}` : ""}`
+                    : "";
+                let chip;
+                if (!r.thru) chip = `<span class="chip none">—</span>`;
+                else if (fmt.metric === "points") chip = `<span class="chip">${r.points}</span>`;
+                else if (fmt.metric === "skins") chip = `<span class="chip ${r.skins ? "" : "none"}">${r.skins}</span>`;
+                else chip = `<span class="chip ${r.toPar < 0 ? "under" : r.toPar === 0 ? "even" : ""}">${toParLabel(r.toPar)}</span>`;
+                return `
+                <tr class="tap" onclick="location.hash='#/scorecard/${r.teamId || r.id}'">
+                  <td class="l pos">${r.tied ? "T" : ""}${r.place}</td>
+                  <td class="l" style="max-width:0">
+                    <div class="nm truncate">${escapeHtml(r.name)}${r.signed ? ` <span class="fin-badge" title="Card signed">F</span>` : ""}</div>
+                    ${sub ? `<div class="sub truncate">${escapeHtml(sub)}</div>` : ""}
+                  </td>
+                  <td class="rule">${chip}${
+                    fmt.metric === "skins" && pot && pot.perSkin && r.skins
+                      ? `<div class="sub" style="color:var(--grass-700)">${money(r.skins * pot.perSkin)}</div>` : ""}</td>
+                  <td class="rule num" style="color:var(--ink-2)">
+                    ${r.thru || "–"}<span style="color:var(--ink-3);font-size:.75rem">/${tournament.num_holes}</span>
+                  </td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>`}
 
-      <div class="flex items-center justify-center gap-2 mt-3.5">
-        <span class="eyebrow">${
-          state === "live" ? "Updating live as scores come in"
+      <p class="text-center text-xs muted-2 mt-3">
+        ${state === "live" ? "Updating live as scores come in"
           : state === "unfinished" ? "Scoring stopped — cards were never signed"
           : state === "never_started" ? "No scores were entered"
-          : "Tournament completed"}</span>
-      </div>
-      <p class="text-center text-xs muted-2 mt-2">
-        ${fmt.metric === "points" ? "Most points wins"
-          : fmt.metric === "skins" ? (pot && pot.buyIn > 0
-              ? "Outright low wins the skin — ties carry, and the pot splits between skins won"
-              : "Outright low score wins the skin — ties carry over")
-          : `<span class="to-par under font-bold">−</span> under par`}
-        &nbsp;·&nbsp; tap a row for the full card
+          : "Tournament completed"}
+        ${rows.length ? "&nbsp;·&nbsp; tap a row for the card" : ""}
       </p>
     `;
   }

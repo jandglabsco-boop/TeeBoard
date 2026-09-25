@@ -25,20 +25,22 @@
      direct sunlight on a course.
      ============================================================ */
   :root {
-    /* dark chrome */
-    --ink-900: #08110C;
-    --ink-800: #0D1A13;
-    --ink-700: #16261D;
-    --ink-600: #22382C;
+    /* Dark chrome. Cooled off a green-black that read as muddy; this is a
+       near-neutral slate so the brand green reads as an accent against it
+       rather than a tint of it. */
+    --ink-900: #0B1017;
+    --ink-800: #121924;
+    --ink-700: #1B2532;
+    --ink-600: #2A3646;
 
     /* light surfaces + text */
-    --paper:   #F2F5F1;
+    --paper:   #F4F5F7;
     --surface: #FFFFFF;
-    --ink:     #0E1A14;
-    --ink-2:   #55665D;
-    --ink-3:   #84948C;
-    --line:    #E2E8E3;
-    --line-2:  #CBD6CE;
+    --ink:     #0E141B;
+    --ink-2:   #57616E;
+    --ink-3:   #8B94A0;
+    --line:    #E4E7EB;
+    --line-2:  #CFD4DB;
 
     /* brand green, derived from the TeeBoard flag mark */
     --grass-100: #E7F6EB;
@@ -53,8 +55,10 @@
     --under: #D6252B;
     --gold:  #D6A419;
 
-    --radius:    14px;
-    --radius-sm: 10px;
+    /* Tighter than before. A 14px radius on every surface is what made
+       everything read as the same soft card; data surfaces want edges. */
+    --radius:    10px;
+    --radius-sm: 7px;
   }
 
   * { -webkit-tap-highlight-color: transparent; }
@@ -106,7 +110,12 @@
 
   /* Header tab. Reads as chrome until it's the page you're on, then it
      lights up the way a selected broadcast tab does. */
-  #nav-tournaments, #nav-players { transition: color .15s ease, background .15s ease; }
+  /* Quieter than the wordmark. These are wayfinding, not headlines — at
+     eyebrow size and spacing they were competing with the brand. */
+  #nav-tournaments, #nav-players {
+    font-size: .68rem; letter-spacing: .08em; padding: 4px 7px;
+    transition: color .15s ease, background .15s ease;
+  }
   #nav-tournaments:hover, #nav-players:hover { color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); }
   #nav-tournaments.is-active, #nav-players.is-active { color: var(--grass-400); background: rgba(76,203,120,.12); }
 
@@ -561,6 +570,137 @@
     #qr-print-area canvas { margin: 1.5rem auto; }
     .no-print { display: none !important; }
   }
+
+  /* ============================================================
+     Identity band, tabs, data table
+     ------------------------------------------------------------
+     Replaces the dark hero that opened fourteen different screens
+     with the same eyebrow / huge caps / muted sentence. A band
+     states what you are looking at in two lines and gets out of
+     the way; the data underneath is the page.
+     ============================================================ */
+
+  .idband {
+    background: var(--ink-900);
+    color: #fff;
+    padding: 14px 16px 0;
+    margin: -16px -16px 0;          /* bleed past the page gutter */
+    border-bottom: 1px solid rgba(255,255,255,.07);
+  }
+  .idband-top { display: flex; align-items: flex-start; gap: 10px; }
+  .idband-meta { min-width: 0; flex: 1; }
+
+  /* Bold italic for names — the one piece of broadcast styling worth
+     borrowing. Archivo ships true italics, so this isn't a faux slant. */
+  .idname {
+    font-style: italic;
+    font-weight: 800;
+    font-size: 1.45rem;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-top: 2px;
+  }
+  .idsub { font-size: .8rem; color: rgba(255,255,255,.55); margin-top: 3px; }
+
+  .idcrest {
+    width: 46px; height: 46px; flex: none;
+    border-radius: 8px; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-900); font-weight: 800; font-size: 1.05rem;
+    font-family: 'Barlow Condensed', sans-serif; letter-spacing: .02em;
+  }
+
+  /* Tabs sit on the band's bottom edge, the selected one lifting out of
+     the dark onto the content below. */
+  .tabs { display: flex; gap: 2px; margin-top: 12px; }
+  .tab {
+    padding: 8px 14px 9px;
+    font-size: .8rem; font-weight: 700;
+    color: rgba(255,255,255,.55);
+    border-radius: 7px 7px 0 0;
+    white-space: nowrap;
+  }
+  .tab:hover { color: rgba(255,255,255,.85); }
+  .tab.is-on { background: var(--paper); color: var(--ink); }
+
+  .statstrip {
+    display: flex; gap: 22px;
+    padding: 11px 0 13px;
+    margin-top: 11px;
+    border-top: 1px solid rgba(255,255,255,.08);
+  }
+  .statstrip .v { font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+                  font-size: 1.45rem; line-height: 1; font-variant-numeric: tabular-nums; }
+  .statstrip .k { font-family: 'Barlow Condensed', sans-serif; text-transform: uppercase;
+                  font-size: .68rem; letter-spacing: .1em; color: rgba(255,255,255,.45); margin-top: 3px; }
+
+  /* Dense data table. Column rules and a tight row height are what make a
+     leaderboard scannable; stacked rounded cards are not a leaderboard. */
+  .dtable { width: 100%; border-collapse: collapse; background: var(--surface); }
+  .dtable thead th {
+    font-family: 'Barlow Condensed', sans-serif;
+    text-transform: uppercase; letter-spacing: .09em;
+    font-size: .7rem; font-weight: 600; color: var(--ink-3);
+    padding: 7px 8px; text-align: right; white-space: nowrap;
+    background: #FAFBFC; border-bottom: 1px solid var(--line-2);
+  }
+  .dtable thead th:first-child,
+  .dtable thead th.l { text-align: left; }
+  .dtable td {
+    padding: 9px 8px; font-size: .88rem; text-align: right;
+    border-bottom: 1px solid var(--line); vertical-align: middle;
+  }
+  .dtable td.l { text-align: left; }
+  .dtable tbody tr:last-child td { border-bottom: 0; }
+  .dtable tbody tr.tap:active { background: #F7F9FB; }
+  /* Vertical rules only where numbers need separating. */
+  .dtable .rule { border-left: 1px solid var(--line); }
+  .dtable .pos { font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+                 font-size: .95rem; color: var(--ink-2); width: 2.4rem; }
+  .dtable .nm { font-weight: 600; letter-spacing: -.01em; }
+  .dtable .sub { font-size: .7rem; color: var(--ink-3); margin-top: 1px; }
+  .dtable .num { font-variant-numeric: tabular-nums; }
+
+  /* Score as a filled chip rather than loose text, so the eye lands on it. */
+  .chip {
+    display: inline-block; min-width: 2.5rem;
+    padding: 3px 7px; border-radius: 6px;
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: 1rem; line-height: 1.15; text-align: center;
+    font-variant-numeric: tabular-nums;
+    background: var(--ink-700); color: #fff;
+  }
+  .chip.under { background: var(--under); }
+  .chip.even  { background: var(--ink-600); }
+  .chip.none  { background: transparent; color: var(--ink-3); font-weight: 600; }
+  .chip.lead  { background: var(--gold); color: #3A2900; }
+
+  .sectionbar {
+    display: flex; align-items: baseline; gap: 10px;
+    margin: 20px 0 8px;
+  }
+  .sectionbar .t {
+    font-family: 'Barlow Condensed', sans-serif; text-transform: uppercase;
+    letter-spacing: .11em; font-size: .78rem; font-weight: 600; color: var(--ink-2);
+  }
+  .sectionbar .rule { flex: 1; height: 1px; background: var(--line); }
+  .sectionbar .n { font-size: .72rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+  /* Compact list row for directories — a line of information, not a card. */
+  .listrow {
+    display: flex; align-items: center; gap: 11px;
+    padding: 11px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .listrow:last-child { border-bottom: 0; }
+  .listrow:active { background: #F7F9FB; }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -597,6 +737,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925b"></script>
+  <script src="app.js?v=20260925e"></script>
 </body>
 </html>
