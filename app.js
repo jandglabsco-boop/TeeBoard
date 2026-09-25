@@ -1110,6 +1110,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     return;
   }
   if (await handleAuthCallback()) return;
+  initHeaderMenu();
   route();
   updateOfflineBadge();
   flushScoreQueue();
@@ -1294,25 +1295,6 @@ async function viewHome() {
     ` : ""}
 
     <div id="news-slot"></div>
-
-    <div class="grid grid-cols-1 gap-2.5 mb-2">
-      <a href="#/join" class="row-link">
-        <span class="icon-tile">${icon("flag", 22)}</span>
-        <div class="min-w-0 flex-1">
-          <div class="font-bold">Join a tournament</div>
-          <div class="text-sm muted">Got a code? Score for your team.</div>
-        </div>
-        <span class="muted-2 shrink-0">${icon("arrow", 18)}</span>
-      </a>
-      <a href="#/create" class="row-link">
-        <span class="icon-tile">${icon("trophy", 22)}</span>
-        <div class="min-w-0 flex-1">
-          <div class="font-bold">Create a tournament</div>
-          <div class="text-sm muted">Set up tonight's scramble, get a code.</div>
-        </div>
-        <span class="muted-2 shrink-0">${icon("arrow", 18)}</span>
-      </a>
-    </div>
 
     ${!user && !IS_NATIVE_APP ? marketingHtml() : ""}
 
@@ -1953,6 +1935,43 @@ function rankedFor(players, mode) {
     p.tiedRank = list.some((o, j) => j !== i && o.rank === p.rank);
   });
   return list;
+}
+
+// ---------- HEADER MENU ----------
+// Wired once at load, not per render, so the listeners don't stack up as the
+// router redraws the page.
+
+function setMenuOpen(open) {
+  const btn = document.getElementById("menu-btn");
+  const panel = document.getElementById("menu-panel");
+  if (!btn || !panel) return;
+  panel.hidden = !open;
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function initHeaderMenu() {
+  const btn = document.getElementById("menu-btn");
+  const panel = document.getElementById("menu-panel");
+  if (!btn || !panel) return;
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setMenuOpen(panel.hidden);
+  });
+
+  // A click anywhere else closes it, including on one of its own links —
+  // those change the hash, and the panel should not still be hanging open
+  // over the page it just navigated to.
+  document.addEventListener("click", (e) => {
+    if (panel.hidden) return;
+    if (!panel.contains(e.target) || e.target.closest(".menuitem")) setMenuOpen(false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !panel.hidden) { setMenuOpen(false); btn.focus(); }
+  });
+
+  window.addEventListener("hashchange", () => setMenuOpen(false));
 }
 
 // ---------- GOLF NEWS ----------

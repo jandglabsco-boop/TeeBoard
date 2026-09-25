@@ -895,6 +895,52 @@
   .newssum { font-size: .85rem; line-height: 1.45; color: rgba(255,255,255,.6); }
   .newsdate { font-size: .72rem; color: var(--ink-3); }
   .newscard.lead .newsdate { color: rgba(255,255,255,.45); }
+
+  /* Three lines, top right. */
+  .menuwrap { position: relative; }
+  .menubtn {
+    display: flex; flex-direction: column; justify-content: center; gap: 5px;
+    width: 40px; height: 40px; padding: 0 9px; border-radius: 9px;
+    background: transparent; border: 1px solid rgba(255,255,255,.14);
+    cursor: pointer;
+  }
+  .menubtn span {
+    display: block; height: 2px; border-radius: 2px; background: #fff;
+    transition: transform .18s ease, opacity .14s ease;
+  }
+  .menubtn:hover { background: rgba(255,255,255,.08); }
+  /* Open state folds the lines into a cross, so the button also closes it. */
+  .menubtn[aria-expanded="true"] span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+  .menubtn[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+  .menubtn[aria-expanded="true"] span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+  .menupanel {
+    position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
+    min-width: 264px; padding: 7px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: 0 16px 42px rgba(0,0,0,.28);
+  }
+  .menupanel[hidden] { display: none; }
+  .menuitem {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 10px 12px; border-radius: 8px; color: var(--ink);
+  }
+  .menuitem:hover { background: var(--surface-2); }
+  .mi-t { font-weight: 600; font-size: .92rem; }
+  .mi-s { font-size: .78rem; color: var(--ink-2); }
+  .menusep { height: 1px; background: var(--line); margin: 6px 4px; }
+
+  /* On a phone the panel spans the screen rather than hanging off the edge. */
+  @media (max-width: 480px) {
+    .menupanel { position: fixed; left: 10px; right: 10px; min-width: 0; top: 66px; }
+  }
+
+  /* Below tablet the inline nav is hidden: the wordmark, the action and the
+     menu fit; the nav on top of them does not, and it was clipping mid-word.
+     Those links live in the menu, so nothing is lost. */
+  @media (max-width: 760px) {
+    #mainnav { display: none; }
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -925,6 +971,29 @@
         <span id="offline-badge"></span>
         <span id="header-sub"></span>
         <div id="header-profile"></div>
+
+        <!-- The two things a visitor actually comes to do. They were a pair of
+             rows taking the top of the home page; here they are reachable from
+             every screen instead of only one. -->
+        <div class="menuwrap">
+          <button id="menu-btn" class="menubtn" aria-label="Menu"
+                  aria-expanded="false" aria-controls="menu-panel" aria-haspopup="true">
+            <span></span><span></span><span></span>
+          </button>
+          <div id="menu-panel" class="menupanel" role="menu" hidden>
+            <a href="#/join" role="menuitem" class="menuitem">
+              <span class="mi-t">Join a tournament</span>
+              <span class="mi-s">Got a code? Score for your team.</span>
+            </a>
+            <a href="#/create" role="menuitem" class="menuitem">
+              <span class="mi-t">Create a tournament</span>
+              <span class="mi-s">Set up tonight&#39;s scramble, get a code.</span>
+            </a>
+            <div class="menusep"></div>
+            <a href="#/tournaments" role="menuitem" class="menuitem"><span class="mi-t">Tournaments</span></a>
+            <a href="#/players" role="menuitem" class="menuitem"><span class="mi-t">Rankings</span></a>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -960,6 +1029,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925o"></script>
+  <script src="app.js?v=20260925q"></script>
 </body>
 </html>
