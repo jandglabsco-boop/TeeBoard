@@ -115,7 +115,7 @@ variable there restyles the whole app.
 
 ## Billing
 
-Organizers get 30 days free from signup, then $30/month. Players never pay and
+Organizers get 30 days free from signup, then $9.99/month. Players never pay and
 never sign up.
 
 The paywall is enforced by RLS in Postgres (`has_teeboard_access()` on the
@@ -132,7 +132,7 @@ Three Edge Functions back it: `create-checkout`, `stripe-webhook` and
 | Secret | Where it comes from |
 |---|---|
 | `STRIPE_SECRET_KEY` | Stripe → Developers → API keys |
-| `STRIPE_PRICE_ID` | The $30/month recurring price |
+| `STRIPE_PRICE_ID` | The $9.99/month recurring price |
 | `STRIPE_WEBHOOK_SECRET` | Shown when you create the webhook endpoint |
 
 Webhook endpoint: `https://<project>.supabase.co/functions/v1/stripe-webhook`,

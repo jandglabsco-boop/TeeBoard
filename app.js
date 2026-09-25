@@ -235,7 +235,29 @@ const FORMATS = {
     label: "Skins", scoring: "player", ranks: "player", metric: "skins",
     blurb: "Each hole is a skin. Lowest score wins it outright; ties carry it to the next hole.",
   },
+
+  // Match play. Two sides, decided hole by hole on net score rather than by a
+  // total, so these carry ranks: "match" and are read by buildMatch below.
+  // `sideSize` is how many players are on each side, which the setup screen
+  // uses to lay out the right number of name fields.
+  match_singles: {
+    label: "Singles Match", scoring: "player", ranks: "match", metric: "match",
+    match: true, sideSize: 1,
+    blurb: "One against one. Each hole is won, lost or halved on net score — the match ends when it can't be caught.",
+  },
+  match_fourball: {
+    label: "Four-Ball Match", scoring: "player", ranks: "match", metric: "match",
+    match: true, sideSize: 2,
+    blurb: "Two against two, everyone plays their own ball. Each side takes its better net score on the hole.",
+  },
+  match_foursomes: {
+    label: "Foursomes Match", scoring: "team", ranks: "match", metric: "match",
+    match: true, sideSize: 2,
+    blurb: "Two against two, one ball per side, alternating shots. A single score per side per hole.",
+  },
 };
+
+const isMatchFormat = (t) => !!formatOf(t).match;
 
 function formatOf(tournament) {
   return FORMATS[tournament?.format] || FORMATS.scramble;
@@ -357,7 +379,7 @@ function tournamentFinished(tournament, teams) {
 // columns instead.
 const TOURNAMENT_COLS =
   "id, name, course_name, num_holes, par, status, created_at, created_by, " +
-  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in";
+  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in, is_public";
 
 // Same list for an embedded select — `teams(*, tournaments(...))`. PostgREST
 // wants no spaces inside the parentheses.
@@ -390,6 +412,138 @@ function tournamentPar(tournament) {
 // Turns raw team rows into a sorted leaderboard with place/tied set. Shared by
 // the live leaderboard and the admin top-3 export, so the two can never
 // disagree about who actually won.
+// ---------- MATCH PLAY ----------
+//
+// A match is two sides playing each other hole by hole. Unlike the stroke
+// formats there is no field and no total worth ranking: what matters is who is
+// up, by how many, and whether enough holes are left to catch it.
+//
+// Pops come from the DIFFERENCE between the sides, not from full handicaps.
+// The lowest handicap in the match plays off scratch and everyone else
+// receives the difference, which is how match play is actually played — giving
+// both sides their full allowance would cancel out and misallocate the holes.
+
+// Strokes each player receives relative to the lowest handicap in the match.
+function matchAllocations(tournament, sides) {
+  const all = sides.flatMap((s) => s.players);
+  const caps = all.map((p) => Number(p.handicap) || 0);
+  const lowest = caps.length ? Math.min(...caps) : 0;
+  const alloc = new Map();
+  all.forEach((p) => {
+    alloc.set(p.id, strokeAllocation(tournament, (Number(p.handicap) || 0) - lowest));
+  });
+  return alloc;
+}
+
+// One side's net score on a hole, or null when the side hasn't finished it.
+function sideNetOnHole(side, hole, alloc, fmt) {
+  if (fmt.scoring === "team") {
+    // Foursomes: a single ball, so a single score, carrying the side's own
+    // allowance (the combined difference, halved, per convention).
+    const gross = side.teamScoreMap[hole];
+    if (gross == null) return null;
+    return gross - (side.teamAlloc ? side.teamAlloc[hole - 1] : 0);
+  }
+  // Singles and four-ball: each player's own ball. A side needs at least one
+  // player through the hole; the better net counts.
+  let best = null;
+  for (const p of side.players) {
+    const gross = p.scoreMap[hole];
+    if (gross == null) continue;
+    const net = gross - (alloc.get(p.id)?.[hole - 1] ?? 0);
+    if (best == null || net < best) best = net;
+  }
+  return best;
+}
+
+// "3 & 2", "1 up", "A/S" — the way a match result is actually written.
+function matchResultLabel(up, holesLeft, done) {
+  if (up === 0) return done ? "A/S" : "All square";
+  const lead = Math.abs(up);
+  if (done || lead > holesLeft) {
+    // Closed out: "3 & 2" means three up with two to play. Won on the last
+    // hole is "1 up", never "1 & 0".
+    return holesLeft > 0 ? `${lead} & ${holesLeft}` : `${lead} up`;
+  }
+  return `${lead} up`;
+}
+
+function buildMatch(tournament, teams) {
+  const fmt = formatOf(tournament);
+  const n = tournament.num_holes;
+
+  // Exactly two sides make a match. More or fewer is a setup the organizer
+  // still has to finish, so say so rather than inventing an opponent.
+  const list = (teams || []).slice(0, 2);
+  if (list.length < 2) return { incomplete: true, sides: list.length };
+
+  const sides = list.map((t) => {
+    const members = t.team_members || [];
+    const scores = t.scores || [];
+    const players = members.map((m) => {
+      const scoreMap = {};
+      scores.forEach((sc) => { if (sc.team_member_id === m.id) scoreMap[sc.hole_number] = sc.strokes; });
+      return { id: m.id, name: m.player_name, handicap: m.handicap, scoreMap };
+    });
+    const teamScoreMap = {};
+    scores.forEach((sc) => { if (sc.team_member_id == null) teamScoreMap[sc.hole_number] = sc.strokes; });
+    return {
+      id: t.id, name: t.name, players, teamScoreMap,
+      signed: !!t.signed_at,
+    };
+  });
+
+  const alloc = matchAllocations(tournament, sides);
+
+  // Foursomes plays one ball, so the side's allowance is its own, taken as
+  // half the combined difference — the standard foursomes convention.
+  if (fmt.scoring === "team") {
+    const sideCaps = sides.map((s) =>
+      s.players.reduce((a, p) => a + (Number(p.handicap) || 0), 0) / Math.max(1, s.players.length));
+    const low = Math.min(...sideCaps);
+    sides.forEach((s, i) => { s.teamAlloc = strokeAllocation(tournament, (sideCaps[i] - low)); });
+  }
+
+  // ---- walk the holes ----
+  let up = 0;                 // positive: side A ahead
+  let played = 0;
+  let closedOnHole = null;
+  const holes = [];
+
+  for (let h = 1; h <= n; h++) {
+    const a = sideNetOnHole(sides[0], h, alloc, fmt);
+    const b = sideNetOnHole(sides[1], h, alloc, fmt);
+    if (a == null || b == null) { holes.push({ hole: h, played: false }); continue; }
+
+    played++;
+    const winner = a < b ? 0 : b < a ? 1 : null;
+    if (winner === 0) up++;
+    else if (winner === 1) up--;
+
+    const left = n - h;
+    holes.push({ hole: h, played: true, netA: a, netB: b, winner, standing: up });
+
+    // Once the lead exceeds the holes remaining the match is over. Stop there:
+    // holes past the close are not played, and counting a score somebody
+    // entered anyway would walk the result back from a win that already
+    // happened. Recording where it closed is what makes "3 & 2" mean anything.
+    if (Math.abs(up) > left) { closedOnHole = h; break; }
+  }
+
+  const holesLeft = closedOnHole != null ? n - closedOnHole : n - played;
+  const done = closedOnHole != null || played === n || sides.every((s) => s.signed);
+  const leaderIdx = up > 0 ? 0 : up < 0 ? 1 : null;
+
+  return {
+    incomplete: false,
+    sides, holes, up, played, holesLeft, done,
+    closedOnHole,
+    leader: leaderIdx == null ? null : sides[leaderIdx],
+    label: matchResultLabel(up, holesLeft, done),
+    alloc,
+  };
+}
+
 function buildLeaderboard(tournament, teams) {
   const par = tournamentPar(tournament);
   const n = tournament.num_holes;
@@ -903,7 +1057,10 @@ async function renderHeaderProfile() {
 
 const routes = [
   { re: /^#\/$/, view: viewHome },
-  { re: /^#\/create$/, view: viewCreate },
+  { re: /^#\/create$/, view: () => viewCreate() },
+  // Same screen, opened on a match format. A match is a round with two
+  // sides, so it shares the whole create flow rather than forking it.
+  { re: /^#\/match$/, view: () => viewCreate({ match: true }) },
   // Wrapped so the regex match array isn't passed in as prefillCode — bare
   // `view: viewJoin` handed it the match ("#/join"), which pre-filled the code
   // box with that string and auto-fired a doomed lookup on arrival.
@@ -1200,6 +1357,9 @@ async function viewHome() {
     .from("tournaments")
     .select("id, name, course_name, format, num_holes, start_hole, status, created_at, par, handicap, skins_buy_in, " +
             "teams(id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id, updated_at))")
+    // The hero is the public face of the site — a private round must never
+    // surface here, however recent it is.
+    .eq("is_public", true)
     .order("created_at", { ascending: false })
     .limit(6);
   const candidates = (recent || []).filter((t) => tournamentState(t, t.teams) !== "never_started");
@@ -1342,7 +1502,7 @@ const COURSE_FULL_URL = "https://api.opengolfapi.org/api/v1/courses/";
 // records tee_name so it's clear which set the numbers came from.
 const DEFAULT_TEE = "white";
 
-async function viewCreate() {
+async function viewCreate(opts = {}) {
   app.innerHTML = loadingHtml();
   const user = await getUser();
   if (!user) return renderAuthGate();
@@ -1350,7 +1510,7 @@ async function viewCreate() {
   // The real gate is the RLS policy on tournaments; this just avoids letting
   // someone fill in a whole form only to have the insert rejected.
   if (!billingHasAccess(billing)) return renderPaywall(billing, "create");
-  renderCreateForm(user, billing);
+  renderCreateForm(user, billing, opts);
 }
 
 // ---------- billing ----------
@@ -1402,7 +1562,7 @@ function trialBannerHtml(b) {
         <div class="text-sm font-bold" style="color:${urgent ? "var(--under)" : "var(--grass-700)"}">
           ${days === 0 ? "Free trial ends today" : `${days} day${days === 1 ? "" : "s"} left in your free trial`}
         </div>
-        <div class="text-xs" style="color:${urgent ? "var(--under)" : "var(--grass-600)"};opacity:.85">$30/month after that — tap to subscribe</div>
+        <div class="text-xs" style="color:${urgent ? "var(--under)" : "var(--grass-600)"};opacity:.85">$9.99/month after that — tap to subscribe</div>
       </div>
       <span class="shrink-0" style="color:${urgent ? "var(--under)" : "var(--grass-700)"}">${icon("arrow", 16)}</span>
     </a>`;
@@ -1498,7 +1658,7 @@ function renderPaywall(billing, context) {
 
     <div class="card p-5 mb-3">
       <div class="flex items-baseline gap-2 mb-1">
-        <span class="num-display" style="font-size:2.6rem">$30</span>
+        <span class="num-display" style="font-size:2.6rem">$9.99</span>
         <span class="eyebrow">per month</span>
       </div>
       <p class="text-sm muted mb-4">Unlimited tournaments, unlimited players, live leaderboards. Cancel any time.</p>
@@ -1554,7 +1714,7 @@ function marketingHtml() {
     </div>
     <div class="card p-5">
       <div class="flex items-baseline gap-2">
-        <span class="num-display" style="font-size:2.6rem">$30</span>
+        <span class="num-display" style="font-size:2.6rem">$9.99</span>
         <span class="eyebrow">per month</span>
       </div>
       <p class="text-sm muted mt-2 mb-4">
@@ -1602,7 +1762,7 @@ const LEGAL = {
 
       <h2>Free trial and subscription</h2>
       <p>New organizer accounts get <b>30 days free</b>, starting the day the account is created. No payment details are required to start the trial.</p>
-      <p>After the trial, creating and managing tournaments requires an active subscription of <b>$30 USD per month</b>. The subscription renews automatically each month until cancelled. Prices are subject to change with at least 30 days' notice.</p>
+      <p>After the trial, creating and managing tournaments requires an active subscription of <b>$9.99 USD per month</b>. The subscription renews automatically each month until cancelled. Prices are subject to change with at least 30 days' notice.</p>
       <p>If your trial or subscription lapses, tournaments already running keep working — players can still enter scores and leaderboards stay live. You can still view and delete your own tournaments.</p>
 
       <h2>Cancelling</h2>
@@ -1702,7 +1862,7 @@ const LEGAL = {
         <li>Partial months — we don't pro-rate mid-period cancellations.</li>
         <li>Your league's season ending, if you forgot to cancel beforehand.</li>
       </ul>
-      <p>That said, if your situation feels unfair, ask. We'd rather sort it out than argue over $30.</p>
+      <p>That said, if your situation feels unfair, ask. We'd rather sort it out than argue over $9.99.</p>
 
       <h2>How to request one</h2>
       <p>Email <a href="mailto:jandglabsco@gmail.com" class="link-underline">jandglabsco@gmail.com</a> from the address on the account, saying which charge you mean and why. We aim to reply within a few days. Approved refunds go back to the original card via Stripe and typically appear within 5–10 business days.</p>
@@ -2042,6 +2202,8 @@ async function viewTournaments(tab) {
     // its own board without a second request per tournament.
     .select("id, name, course_name, format, num_holes, start_hole, status, created_at, par, handicap, skins_buy_in, " +
             "teams(id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id, updated_at))")
+    // Private rounds are unlisted: reachable by link or join code, absent here.
+    .eq("is_public", true)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -2091,6 +2253,22 @@ async function viewTournaments(tab) {
           </div>
         </div>
         <div class="tcard-body">
+          ${t.match ? `
+            ${t.match.incomplete
+              ? `<p class="text-sm muted text-center py-5">Waiting on the second side.</p>`
+              : `<div class="matchmini">
+                   <div class="mm-side${t.match.up > 0 ? " ahead" : ""}">${escapeHtml(
+                     t.match.sides[0].players.map((p) => p.name).join(" & ") || t.match.sides[0].name)}</div>
+                   <div class="mm-vs">vs</div>
+                   <div class="mm-side${t.match.up < 0 ? " ahead" : ""}">${escapeHtml(
+                     t.match.sides[1].players.map((p) => p.name).join(" & ") || t.match.sides[1].name)}</div>
+                 </div>
+                 <div class="mm-result">${t.match.up === 0
+                   ? (t.match.done ? "Match halved" : "All square")
+                   : `${escapeHtml(t.match.leader.players.map((p) => p.name).join(" & ") || t.match.leader.name)}
+                      ${t.match.done ? "wins" : "leads"} ${escapeHtml(t.match.label)}`}</div>`}
+            <a href="#/leaderboard/${t.id}" class="cardbtn">View match</a>
+          ` : `
           <div class="seg mb-3">
             <span class="on">${fmt.ranks === "player" ? "Players" : "Teams"}</span>
             <a href="#/leaderboard/${t.id}">Full board</a>
@@ -2119,12 +2297,17 @@ async function viewTournaments(tab) {
           ` : `
             <p class="text-sm muted text-center py-6">No scores yet.</p>
             <a href="#/leaderboard/${t.id}" class="cardbtn">View participants</a>`}
+          `}
         </div>
       </div>`;
   }
 
   // Top of each board, so a card can show the leaders without another fetch.
-  shown.forEach((t) => { t.rows = buildLeaderboard(t, t.teams || []); });
+  // A match has no leaderboard — it has a result — so it carries that instead.
+  shown.forEach((t) => {
+    if (isMatchFormat(t)) t.match = buildMatch(t, t.teams || []);
+    else t.rows = buildLeaderboard(t, t.teams || []);
+  });
 
   const boards = { current: live, results: past };
   const active = boards[tab] ? tab : "current";
@@ -2686,7 +2869,7 @@ async function viewBilling() {
           <span class="pill open"><span class="dot"></span>${escapeHtml(b.subscription_status)}</span>
         </div>
         <div class="flex items-baseline gap-2 mb-1">
-          <span class="num-display" style="font-size:2.2rem">$30</span>
+          <span class="num-display" style="font-size:2.2rem">$9.99</span>
           <span class="eyebrow">per month</span>
         </div>
         ${renews ? `<p class="text-sm muted mt-2">Renews ${escapeHtml(renews)}.</p>` : ""}
@@ -2702,7 +2885,7 @@ async function viewBilling() {
       <div class="card p-5 mb-3">
         <div class="eyebrow mb-2">${trialDaysLeft(b) > 0 ? `Free trial · ${trialDaysLeft(b)} days left` : "Trial ended"}</div>
         <div class="flex items-baseline gap-2 mb-1">
-          <span class="num-display" style="font-size:2.6rem">$30</span>
+          <span class="num-display" style="font-size:2.6rem">$9.99</span>
           <span class="eyebrow">per month</span>
         </div>
         <p class="text-sm muted mb-4">Unlimited tournaments, unlimited players, live leaderboards. Cancel any time.</p>
@@ -2711,7 +2894,7 @@ async function viewBilling() {
             <span class="shrink-0 mt-0.5" style="color:var(--grass-700)">${icon("check", 16)}</span>
             <p class="text-sm" style="color:var(--grass-700)">
               <b>You won't be charged today.</b> Your free trial runs to
-              ${escapeHtml(new Date(b.trial_ends_at).toLocaleDateString())} — the first $30 comes out then,
+              ${escapeHtml(new Date(b.trial_ends_at).toLocaleDateString())} — the first $9.99 comes out then,
               and only if you haven't cancelled.
             </p>
           </div>` : ""}
@@ -2927,7 +3110,7 @@ function renderAuthGate() {
             <span class="eyebrow on-dark">days free</span>
           </div>
           <p class="text-sm mt-2" style="color:rgba(255,255,255,.62)">
-            Then $30/month. No card needed to start, and you can cancel any time.
+            Then $9.99/month. No card needed to start, and you can cancel any time.
           </p>
           <ul class="mt-4 pt-4 flex flex-col gap-1.5" style="border-top:1px solid rgba(255,255,255,.09)">
             <li class="text-sm flex items-center gap-2" style="color:rgba(255,255,255,.75)">
@@ -3178,12 +3361,12 @@ async function viewResetPassword() {
   });
 }
 
-function renderCreateForm(user, billing) {
+function renderCreateForm(user, billing, opts = {}) {
   app.innerHTML = `
     ${trialBannerHtml(billing)}
     <div class="mb-4">
       <div class="eyebrow mb-1">Organizer · ${escapeHtml(user.email)}</div>
-      <h1 class="text-2xl">Create a tournament</h1>
+      <h1 class="text-2xl">${opts.match ? "Create a match" : "Create a tournament"}</h1>
     </div>
     <form id="create-form" class="card p-5 flex flex-col gap-5">
       <div>
@@ -3206,6 +3389,27 @@ function renderCreateForm(user, billing) {
         </select>
         <p id="format-blurb" class="text-xs muted-2 mt-1.5 leading-relaxed"></p>
       </div>
+      <!-- Which tee the round is played from. Populated from the course once
+           one is chosen; hidden until then, because an empty tee list is
+           noise on a form you have not started filling in. -->
+      <div id="tee-wrap" class="hidden">
+        <label class="field-label" for="tee-select">Tees</label>
+        <select id="tee-select" name="tee"></select>
+        <p id="tee-note" class="text-xs muted-2 mt-1.5"></p>
+      </div>
+
+      <div>
+        <label class="field-label" for="visibility-select">Visibility</label>
+        <select id="visibility-select" name="visibility">
+          <option value="public">Public — listed on the tournaments page</option>
+          <option value="private">Private — unlisted, code still works</option>
+        </select>
+        <p class="text-xs muted-2 mt-1.5 leading-relaxed">
+          Private rounds stay off the public list. Anyone with the join code or the
+          link can still open and score them.
+        </p>
+      </div>
+
       <div id="buyin-wrap" class="hidden">
         <label class="field-label">Buy-in per player</label>
         <input id="buyin-input" name="buyin" type="number" min="0" max="10000" step="1"
@@ -3234,6 +3438,9 @@ function renderCreateForm(user, billing) {
   `;
 
   const formatSelect = document.getElementById("format-select");
+  // Arriving from "Create a match" opens on singles; the other match formats
+  // are in the same list, so switching to four-ball is one tap away.
+  if (opts.match) formatSelect.value = "match_singles";
   const formatBlurb = document.getElementById("format-blurb");
   const buyinWrap = document.getElementById("buyin-wrap");
   const refreshFormatBlurb = () => {
@@ -3319,6 +3526,35 @@ function renderCreateForm(user, billing) {
       ? ` Heads up: OpenGolfAPI's summary lists par ${summaryPar} for this course overall, which doesn't match the full card's total of ${fullTotalPar} — double check the numbers before sharing the join code.`
       : "";
     const siteLink = website ? ` <a href="${escapeHtml(website)}" target="_blank" class="link-underline">${escapeHtml(name)}'s site</a> ·` : "";
+    // Offer the tees this course actually publishes. Switching tee swaps the
+    // yardage row on the card; par and stroke index don't change with it.
+    const teeWrap = document.getElementById("tee-wrap");
+    const teeSelect = document.getElementById("tee-select");
+    const teeNote = document.getElementById("tee-note");
+    const teeKeys = Object.keys(courseScorecard.teeYardages || {});
+    if (teeWrap && teeSelect) {
+      if (teeKeys.length > 1) {
+        const cap = (k) => k.charAt(0).toUpperCase() + k.slice(1);
+        teeSelect.innerHTML = teeKeys.map((k) => {
+          const row = sliceForSelection(courseScorecard.teeYardages[k]);
+          const total = row ? row.reduce((a, b) => a + b, 0) : null;
+          return `<option value="${escapeHtml(k)}"${k === courseScorecard.teeKey ? " selected" : ""}>` +
+                 `${escapeHtml(cap(k))}${total ? ` — ${total} yds` : ""}</option>`;
+        }).join("");
+        teeWrap.classList.remove("hidden");
+        if (teeNote) teeNote.textContent = "Par and stroke index are the same from every tee; only the yardage changes.";
+        teeSelect.onchange = () => {
+          const k = teeSelect.value;
+          courseScorecard.teeKey = k;
+          courseScorecard.yardage = courseScorecard.teeYardages[k];
+          courseScorecard.teeName = k.charAt(0).toUpperCase() + k.slice(1);
+          refreshNoteForSelection();
+        };
+      } else {
+        teeWrap.classList.add("hidden");
+      }
+    }
+
     const yds = sliceForSelection(courseScorecard.yardage);
     const extras = [];
     if (yds) extras.push(`${yds.reduce((a, b) => a + b, 0)} yds off the ${escapeHtml(courseScorecard.teeName || "white")} tees`);
@@ -3434,11 +3670,23 @@ function renderCreateForm(user, billing) {
           const nums = [...byNum.keys()].sort((a, b) => a - b);
           // Only trust it if it lines up with the par card we're already using.
           if (nums.length === totalHoles && nums.every((n, i) => byNum.get(n).par === parArr[i])) {
-            const yds = nums.map((n) => (byNum.get(n).yardages || {})[DEFAULT_TEE] ?? null);
+            // Keep every tee the course publishes, not just the default, so
+            // the organizer can pick the set they are actually playing.
+            const teeNames = [...new Set(nums.flatMap((n) => Object.keys(byNum.get(n).yardages || {})))];
+            const byTee = {};
+            teeNames.forEach((tee) => {
+              const row = nums.map((n) => (byNum.get(n).yardages || {})[tee] ?? null);
+              if (row.every((v) => typeof v === "number")) byTee[tee] = row;
+            });
+            courseScorecard.teeYardages = byTee;
+
+            const yds = byTee[DEFAULT_TEE] || byTee[Object.keys(byTee)[0]] || null;
             const hcp = nums.map((n) => byNum.get(n).handicap_index ?? null);
-            if (yds.every((v) => typeof v === "number")) {
+            if (yds) {
+              const chosen = byTee[DEFAULT_TEE] ? DEFAULT_TEE : Object.keys(byTee)[0];
               courseScorecard.yardage = yds;
-              courseScorecard.teeName = DEFAULT_TEE.charAt(0).toUpperCase() + DEFAULT_TEE.slice(1);
+              courseScorecard.teeName = chosen.charAt(0).toUpperCase() + chosen.slice(1);
+              courseScorecard.teeKey = chosen;
             }
             if (hcp.every((v) => typeof v === "number")) courseScorecard.handicap = hcp;
           }
@@ -3536,6 +3784,7 @@ function renderCreateForm(user, billing) {
           handicap: sliceForSelection(courseScorecard && courseScorecard.handicap),
           tee_name: (courseScorecard && courseScorecard.teeName) || null,
           course_id: (courseScorecard && courseScorecard.courseId) || null,
+          is_public: document.getElementById("visibility-select").value !== "private",
           created_by: user.id,
         })
         .select()
@@ -3746,7 +3995,14 @@ async function viewAdmin(tournamentId) {
             <input id="new-team-name" placeholder="New team name, e.g. The Duffers" />
           </div>
           <label class="field-label">Player name</label>
-          <input id="add-player-name" placeholder="Player name" class="mb-4" />
+          <div class="flex gap-2 mb-4">
+            <input id="add-player-name" placeholder="Player name" class="flex-1 min-w-0" />
+            <!-- Course handicap. Optional everywhere, but it is what allocates
+                 pops in a match, so the field sits next to the name rather
+                 than behind another screen. -->
+            <input id="add-player-hcp" type="number" min="0" max="54" step="0.1"
+                   placeholder="HCP" aria-label="Course handicap" style="width:5.5rem" />
+          </div>
           <button id="add-player-btn" class="btn-primary w-full">Add player</button>
           <div id="add-player-status" class="text-xs mt-2"></div>
         </div>
@@ -3992,8 +4248,16 @@ async function viewAdmin(tournamentId) {
         const teamChoice = addTeamSelect.value;
         const newTeamName = document.getElementById("new-team-name").value.trim();
         const playerName = document.getElementById("add-player-name").value.trim();
+        const hcpRaw = document.getElementById("add-player-hcp").value.trim();
+        const handicap = hcpRaw === "" ? null : Number(hcpRaw);
         const statusEl = document.getElementById("add-player-status");
         const btn = document.getElementById("add-player-btn");
+
+        if (handicap != null && (!Number.isFinite(handicap) || handicap < 0 || handicap > 54)) {
+          statusEl.className = "text-xs mt-2 status-err";
+          statusEl.textContent = "Handicap must be between 0 and 54, or left blank.";
+          return;
+        }
 
         if (!playerName) {
           statusEl.className = "text-xs mt-2 status-err";
@@ -4010,7 +4274,7 @@ async function viewAdmin(tournamentId) {
         statusEl.className = "text-xs mt-2 status-info";
         statusEl.textContent = "Adding…";
 
-        const result = await addPlayerManually(teamChoice, newTeamName, playerName);
+        const result = await addPlayerManually(teamChoice, newTeamName, playerName, handicap);
 
         btn.disabled = false;
         if (result.error) {
@@ -4093,7 +4357,7 @@ async function viewAdmin(tournamentId) {
 
   // Lets the organizer add a single player directly, without a CSV — either
   // onto an existing team or a brand new one.
-  async function addPlayerManually(teamChoice, newTeamName, playerName) {
+  async function addPlayerManually(teamChoice, newTeamName, playerName, handicap = null) {
     let teamId = teamChoice;
     if (teamChoice === "__new") {
       // The join code is generated server-side now, so the client can't pick
@@ -4108,6 +4372,7 @@ async function viewAdmin(tournamentId) {
     const { error: memberErr } = await sb.rpc("organizer_add_player", {
       p_team_id: teamId,
       p_player_name: playerName,
+      p_handicap: handicap,
     });
     if (memberErr) return { error: memberErr.message };
     return { ok: true };
@@ -4751,6 +5016,107 @@ async function viewTeam(teamId) {
 
 // ---------- LEADERBOARD ----------
 
+// The match screen: who is up, by how many, and the hole-by-hole story.
+function renderMatchBoard(tournament, teams) {
+  const fmt = formatOf(tournament);
+  const m = buildMatch(tournament, teams);
+
+  const metaBits = [fmt.label, `${tournament.num_holes} holes`, tournament.course_name || null].filter(Boolean);
+  const head = `
+    <div class="idband">
+      <div class="idband-top">
+        <div class="min-w-0">
+          <div class="idname">${escapeHtml(tournament.name)}</div>
+          <div class="idmeta">${metaBits.map(escapeHtml).join(" · ")}</div>
+        </div>
+        ${tournament.is_public === false ? `<span class="pill">PRIVATE</span>` : ""}
+      </div>
+    </div>`;
+
+  if (m.incomplete) {
+    return void (app.innerHTML = head + `
+      <div class="panel p-8 text-center mt-3">
+        <p class="text-sm muted">A match needs two sides. ${m.sides === 1 ? "One is" : "None are"} set up so far —
+        share the join code and the second side can add themselves.</p>
+        <p class="text-sm mt-3"><b>Code ${escapeHtml(tournament.join_code || "")}</b></p>
+      </div>`);
+  }
+
+  const [A, B] = m.sides;
+  const nameOf = (side) => side.players.length
+    ? side.players.map((p) => p.name).join(" & ")
+    : side.name;
+
+  // Standing, stated the way it would be said out loud.
+  const standing = m.up === 0
+    ? (m.done ? "Match halved" : "All square")
+    : `${escapeHtml(nameOf(m.leader))} ${m.done ? "wins" : "leads"} ${escapeHtml(m.label)}`;
+
+  const sideCard = (side, idx) => {
+    const ahead = (idx === 0 && m.up > 0) || (idx === 1 && m.up < 0);
+    return `
+      <div class="matchside${ahead ? " ahead" : ""}">
+        <div class="ms-name">${escapeHtml(nameOf(side))}</div>
+        ${(() => {
+          if (!side.players.length) return "";
+          // In singles the side name is the player's name, so repeating it
+          // under itself says nothing — show the handicap alone there.
+          if (side.players.length === 1) {
+            const h = side.players[0].handicap;
+            return `<div class="ms-hcp">${h == null ? "No handicap set" : h == 0 ? "Scratch" : `Handicap ${h}`}</div>`;
+          }
+          return `<div class="ms-hcp">${side.players.map((p) =>
+            `${escapeHtml(p.name)}${p.handicap != null ? ` (${p.handicap})` : ""}`).join(" · ")}</div>`;
+        })()}
+      </div>`;
+  };
+
+  const playedHoles = m.holes.filter((h) => h.played);
+
+  app.innerHTML = head + `
+    <div class="matchhead">
+      ${sideCard(A, 0)}
+      <div class="ms-vs">vs</div>
+      ${sideCard(B, 1)}
+    </div>
+
+    <div class="matchresult">
+      <div class="mr-line">${standing}</div>
+      <div class="mr-sub">${m.done
+        ? (m.closedOnHole ? `Closed out on hole ${holeLabel(tournament, m.closedOnHole)}` : "All holes played")
+        : `${m.played} of ${tournament.num_holes} played`}</div>
+    </div>
+
+    ${playedHoles.length ? `
+      <div class="sectionbar mt-5"><span class="t">Hole by hole</span><span class="rule"></span></div>
+      <table class="dtable">
+        <thead>
+          <tr>
+            <th class="l" style="width:3.2rem">Hole</th>
+            <th class="rule">${escapeHtml(nameOf(A))}</th>
+            <th class="rule">${escapeHtml(nameOf(B))}</th>
+            <th class="rule" style="width:6.5rem">Standing</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${playedHoles.map((h) => {
+            const lead = h.standing === 0 ? "A/S"
+              : `${Math.abs(h.standing)} up ${h.standing > 0 ? escapeHtml(nameOf(A)) : escapeHtml(nameOf(B))}`;
+            return `
+              <tr>
+                <td class="l pos">${holeLabel(tournament, h.hole)}</td>
+                <td class="rule num${h.winner === 0 ? " won" : ""}">${h.netA}</td>
+                <td class="rule num${h.winner === 1 ? " won" : ""}">${h.netB}</td>
+                <td class="rule" style="font-size:.78rem;color:var(--ink-2)">${lead}</td>
+              </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+      <p class="text-xs muted-2 mt-2 text-center">Scores shown are net of handicap strokes.</p>
+    ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}
+  `;
+}
+
 async function viewLeaderboard(tournamentId) {
   app.innerHTML = loadingHtml();
 
@@ -4767,8 +5133,13 @@ async function viewLeaderboard(tournamentId) {
       .select("id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
       .eq("tournament_id", tournamentId);
 
-    const rows = buildLeaderboard(tournament, teams);
     const fmt = formatOf(tournament);
+
+    // A match is not a leaderboard — it is one result between two sides — so
+    // it gets its own screen rather than a table of two rows.
+    if (fmt.match) return renderMatchBoard(tournament, teams);
+
+    const rows = buildLeaderboard(tournament, teams);
     // Every card signed means the round is over, even if nobody closed it —
     // and so does scoring that stopped days ago.
     const state = tournamentState(tournament, teams);
