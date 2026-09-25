@@ -821,6 +821,7 @@ const routes = [
   { re: /^#\/billing/, view: () => viewBilling() },
   { re: /^#\/tournaments$/, view: () => viewTournaments() },
   { re: /^#\/players$/, view: () => viewPlayers() },
+  { re: /^#\/players\/(scramble|individual)$/, view: (m) => viewPlayers(m[1]) },
   { re: /^#\/player\/(.+)$/, view: (m) => viewPlayer(m[1]) },
   { re: /^#\/stats$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
@@ -1583,8 +1584,26 @@ const LEGAL = {
 const PLACE_POINTS = [100, 75, 60, 50, 45, 40, 36, 32, 29, 26];
 const PLACE_POINTS_TAIL = 20;
 
+// The season starts here. Everything before this date was building and
+// testing the app, and six weeks of real rounds in between were deleted, so
+// counting any of it would produce a table nobody recognises.
+const SEASON_START = "2026-09-24";
+
+// Two separate orders of merit. Team-ranked formats (scramble, alternate
+// shot, best ball) are one competition; formats where each golfer plays
+// their own ball are another. A scramble win and a medal win are not the
+// same achievement and shouldn't share a table.
+const RANKING_MODES = {
+  scramble:   { label: "Scramble",   ranks: "team",   blurb: "Team formats — scramble, alternate shot, best ball." },
+  individual: { label: "Individual", ranks: "player", blurb: "Your own ball — stroke play, Stableford, skins." },
+};
+
 function pointsForPlace(place) {
   return PLACE_POINTS[place - 1] ?? PLACE_POINTS_TAIL;
+}
+
+function emptyModeStats() {
+  return { rounds: 0, points: 0, wins: 0, podiums: 0, bestFinish: null, finishes: [] };
 }
 
 function emptyPlayerStats(name) {
@@ -1600,6 +1619,9 @@ function emptyPlayerStats(name) {
     holesPlayed: 0,
     toPar: 0,              // cumulative, across completed rounds
     history: [],           // one entry per tournament
+    // The same record split by competition, so a scramble specialist and a
+    // medal player are each rankable without one flattering the other.
+    byMode: { scramble: emptyModeStats(), individual: emptyModeStats() },
   };
 }
 
@@ -1607,9 +1629,10 @@ function emptyPlayerStats(name) {
  * Turns the nested tournament payload into per-player career records.
  * `tournaments` must include teams -> team_members and scores.
  */
-function buildCareerStats(tournaments) {
+function buildCareerStats(tournaments, since = SEASON_START) {
   const byKey = new Map();
   const displayName = new Map();
+  const cutoff = since ? new Date(since + "T00:00:00Z").getTime() : -Infinity;
 
   function statsFor(rawName) {
     const key = String(rawName || "").trim().toLowerCase();
@@ -1621,6 +1644,7 @@ function buildCareerStats(tournaments) {
   }
 
   (tournaments || []).forEach((t) => {
+    if (new Date(t.created_at).getTime() < cutoff) return;   // before the season
     const teams = t.teams || [];
     const rows = buildLeaderboard(t, teams);
     const started = rows.filter((r) => r.thru > 0);
@@ -1653,6 +1677,9 @@ function buildCareerStats(tournaments) {
         const s = statsFor(rawName);
         if (!s) return;
 
+        const mode = fmt.ranks === "team" ? "scramble" : "individual";
+        const m = s.byMode[mode];
+
         s.rounds += 1;
         s.points += points;
         s.finishes.push(row.place);
@@ -1660,6 +1687,13 @@ function buildCareerStats(tournaments) {
         if (contested && row.place === 1) s.wins += 1;
         if (contested && row.place <= 3) s.podiums += 1;
         s.toPar += row.toPar;
+
+        m.rounds += 1;
+        m.points += points;
+        m.finishes.push(row.place);
+        if (m.bestFinish == null || row.place < m.bestFinish) m.bestFinish = row.place;
+        if (contested && row.place === 1) m.wins += 1;
+        if (contested && row.place <= 3) m.podiums += 1;
 
         for (let h = 1; h <= t.num_holes; h++) {
           const strokes = row.scoreMap[h];
@@ -1680,6 +1714,7 @@ function buildCareerStats(tournaments) {
           name: t.name,
           date: t.created_at,
           format: fmt.label,
+          mode,
           place: row.place,
           tied: row.tied,
           contested,
@@ -1724,6 +1759,18 @@ async function loadCareerStats(force = false) {
   if (error) throw error;
   careerCache = buildCareerStats(data || []);
   return careerCache;
+}
+
+// Players who actually competed in this mode, ordered by its points.
+function rankedFor(players, mode) {
+  return players
+    .filter((p) => p.byMode[mode].rounds > 0)
+    .map((p) => ({ ...p, m: p.byMode[mode] }))
+    .sort((a, b) =>
+      b.m.points - a.m.points ||
+      b.m.wins - a.m.wins ||
+      a.toPar - b.toPar ||
+      a.name.localeCompare(b.name));
 }
 
 // ---------- TOURNAMENT DIRECTORY ----------
@@ -1830,7 +1877,8 @@ async function viewTournaments() {
 
 // ---------- PLAYER RANKINGS ----------
 
-async function viewPlayers() {
+async function viewPlayers(modeRaw) {
+  const mode = RANKING_MODES[modeRaw] ? modeRaw : "scramble";
   app.innerHTML = loadingHtml();
 
   let players;
@@ -1845,20 +1893,34 @@ async function viewPlayers() {
     return;
   }
 
-  const ranked = players.filter((p) => p.rounds > 0);
+  const ranked = rankedFor(players, mode);
+  const seasonLabel = new Date(SEASON_START + "T00:00:00Z")
+    .toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+  const tabs = Object.entries(RANKING_MODES).map(([key, m]) => `
+    <a href="#/players/${key}" class="flex-1 text-center py-2.5 rounded-lg text-sm font-semibold
+       ${key === mode ? "" : "muted"}"
+       style="${key === mode
+         ? "background:var(--ink-900);color:#fff"
+         : "background:var(--surface);border:1px solid var(--line)"}">
+      ${m.label}
+    </a>`).join("");
 
   app.innerHTML = `
-    <section class="panel-dark px-5 pt-6 pb-5 mb-4">
+    <section class="panel-dark px-5 pt-6 pb-5 mb-3">
       <div class="eyebrow on-dark mb-2">Rankings</div>
       <h1 class="display" style="font-size:2rem;color:#fff">Order of merit</h1>
       <p class="mt-2 text-[15px]" style="color:rgba(255,255,255,.6)">
-        Points from every finish, across every round. Tap anyone for their card.
+        Season began ${escapeHtml(seasonLabel)}. Tap anyone for their card.
       </p>
     </section>
 
+    <div class="flex gap-2 mb-2">${tabs}</div>
+    <p class="text-xs muted-2 text-center mb-3">${escapeHtml(RANKING_MODES[mode].blurb)}</p>
+
     ${ranked.length === 0 ? `
       <div class="card p-6 text-center">
-        <div class="font-semibold mb-1">No completed rounds yet</div>
+        <div class="font-semibold mb-1">No ${escapeHtml(RANKING_MODES[mode].label.toLowerCase())} rounds yet this season</div>
         <p class="text-sm muted">Rankings appear once scores go in.</p>
       </div>` : `
       <div class="card overflow-hidden">
@@ -1882,9 +1944,9 @@ async function viewPlayers() {
                 ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
               </span>
             </span>
-            <span class="num-display text-right" style="width:3.2rem;font-size:1.15rem">${Math.round(p.points)}</span>
-            <span class="num text-right text-sm font-semibold" style="width:2.6rem">${p.wins || "–"}</span>
-            <span class="num text-right text-sm muted" style="width:3rem">${p.rounds}</span>
+            <span class="num-display text-right" style="width:3.2rem;font-size:1.15rem">${Math.round(p.m.points)}</span>
+            <span class="num text-right text-sm font-semibold" style="width:2.6rem">${p.m.wins || "–"}</span>
+            <span class="num text-right text-sm muted" style="width:3rem">${p.m.rounds}</span>
           </a>`).join("")}
       </div>
 
@@ -1919,7 +1981,15 @@ async function viewPlayer(keyRaw) {
 
   const scoringHoles = p.holesPlayed || 1;
   const pct = (n) => `${Math.round((n / scoringHoles) * 100)}%`;
-  const rank = players.filter((x) => x.rounds > 0).findIndex((x) => x.key === key) + 1;
+  const rankIn = (mode) => {
+    const i = rankedFor(players, mode).findIndex((x) => x.key === key);
+    return i === -1 ? null : i + 1;
+  };
+  const scrambleRank = rankIn("scramble");
+  const individualRank = rankIn("individual");
+  const bestRank = scrambleRank && individualRank
+    ? Math.min(scrambleRank, individualRank)
+    : (scrambleRank || individualRank);
 
   function markCell(label, value, cls) {
     return `
@@ -1934,13 +2004,9 @@ async function viewPlayer(keyRaw) {
     <a href="#/players" class="btn-ghost mb-3">${icon("arrow", 13, "rotate-180")} All players</a>
 
     <section class="panel-dark px-5 pt-6 pb-5 mb-3">
-      <div class="eyebrow on-dark mb-1">${rank ? `#${rank} on the order of merit` : "Player"}</div>
+      <div class="eyebrow on-dark mb-1">${bestRank ? `#${bestRank} this season` : "Player"}</div>
       <h1 class="display" style="font-size:2.1rem;color:#fff">${escapeHtml(p.name)}</h1>
       <div class="flex gap-7 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
-        <div>
-          <div class="num-display" style="font-size:1.6rem;color:#fff">${Math.round(p.points)}</div>
-          <div class="eyebrow on-dark">Points</div>
-        </div>
         <div>
           <div class="num-display" style="font-size:1.6rem;color:${p.wins ? "var(--gold)" : "#fff"}">${p.wins}</div>
           <div class="eyebrow on-dark">Wins</div>
@@ -1955,6 +2021,25 @@ async function viewPlayer(keyRaw) {
         </div>
       </div>
     </section>
+
+    <!-- The two competitions are scored separately, so show them separately
+         rather than a single total that matches neither board. -->
+    <div class="flex gap-2.5 mb-1">
+      ${Object.entries(RANKING_MODES).map(([key, m]) => {
+        const ms = p.byMode[key];
+        const r = key === "scramble" ? scrambleRank : individualRank;
+        return `
+          <a href="#/players/${key}" class="card p-4 flex-1">
+            <div class="eyebrow mb-1">${m.label}</div>
+            ${ms.rounds === 0
+              ? `<div class="text-sm muted-2">No rounds yet</div>`
+              : `<div class="num-display" style="font-size:1.5rem">${Math.round(ms.points)}<span class="text-xs muted ml-1" style="font-family:Archivo">pts</span></div>
+                 <div class="text-[11px] muted-2 mt-0.5">
+                   ${r ? `#${r} · ` : ""}${ms.wins} win${ms.wins === 1 ? "" : "s"} · ${ms.rounds} round${ms.rounds === 1 ? "" : "s"}
+                 </div>`}
+          </a>`;
+      }).join("")}
+    </div>
 
     <div class="flex items-center gap-3 mt-5 mb-2.5">
       <span class="eyebrow">Scoring · ${p.holesPlayed} holes</span>
@@ -3309,15 +3394,13 @@ async function viewAdmin(tournamentId) {
 
         <button id="toggle-status" class="btn-secondary w-full mb-2.5">${isActive ? "Close tournament" : "Reopen tournament"}</button>
 
-        <div class="card p-5" style="border-color:#F1CFD0">
-          <h3 class="eyebrow mb-2" style="color:var(--under)">Danger zone</h3>
-          <p class="text-xs muted mb-4">Deleting removes every team, player, and score in this tournament. It can't be undone.</p>
-          <button id="delete-tournament-btn" class="btn-danger w-full">Delete tournament</button>
-          <div id="delete-confirm-wrap" class="hidden mt-4 pt-4" style="border-top:1px solid var(--line)">
-            <label class="field-label">Type <b style="color:var(--ink)">${escapeHtml(tournament.name)}</b> to confirm</label>
-            <input id="delete-confirm-input" placeholder="${escapeHtml(tournament.name)}" class="mb-3" />
-            <button id="delete-confirm-btn" class="btn-danger-solid">Permanently delete</button>
-          </div>
+        <div class="card p-4 flex items-start gap-3">
+          <span class="shrink-0 mt-0.5 muted-2">${icon("lock", 18)}</span>
+          <p class="text-xs muted">
+            Tournaments are kept permanently — six weeks of rounds were lost to
+            deletion before this was removed. Close a finished one instead; it
+            stays on the record and keeps counting toward player rankings.
+          </p>
         </div>
       ` : `
         <div class="card p-4 flex items-start gap-3">
@@ -3362,26 +3445,10 @@ async function viewAdmin(tournamentId) {
     });
 
     if (isOwner) {
-      document.getElementById("delete-tournament-btn").addEventListener("click", () => {
-        document.getElementById("delete-confirm-wrap").classList.toggle("hidden");
-      });
-      document.getElementById("delete-confirm-btn").addEventListener("click", async () => {
-        const val = document.getElementById("delete-confirm-input").value.trim();
-        if (val !== tournament.name) return toast("Type the tournament name exactly to confirm", true);
-        const btn = document.getElementById("delete-confirm-btn");
-        btn.disabled = true;
-        btn.textContent = "Deleting…";
-        const { error } = await sb.from("tournaments").delete().eq("id", tournament.id);
-        if (error) {
-          toast("Couldn't delete: " + error.message, true);
-          btn.disabled = false;
-          btn.textContent = "Permanently delete";
-          return;
-        }
-        toast("Tournament deleted");
-        location.hash = "#/";
-      });
-
+      // Deleting a tournament is gone deliberately. Six weeks of Thursday
+      // rounds — full fields, hundreds of scores — were destroyed by it, and
+      // a cascade delete leaves nothing to recover. Closing a tournament does
+      // everything an organizer actually wanted from it.
       const saveBuyin = document.getElementById("save-buyin");
       if (saveBuyin) {
         saveBuyin.addEventListener("click", async () => {
