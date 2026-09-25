@@ -363,6 +363,24 @@ const TOURNAMENT_COLS =
 // wants no spaces inside the parentheses.
 const TOURNAMENT_COLS_EMBED = TOURNAMENT_COLS.replace(/,\s+/g, ",");
 
+// Course logos, matched on a loose key so "Turtleback mountain" and
+// "Turtleback Mountain Golf Resort" both resolve to the same badge. Falls
+// back to initials when a course has no logo on file.
+const COURSE_LOGOS = [
+  { match: /turtleback/i, src: "img/courses/turtleback-mountain.png" },
+];
+
+function courseLogo(courseName) {
+  if (!courseName) return null;
+  const hit = COURSE_LOGOS.find((c) => c.match.test(courseName));
+  return hit ? hit.src : null;
+}
+
+function initialsOf(name) {
+  return String(name || "").split(/\s+/).filter(Boolean)
+    .slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("");
+}
+
 function tournamentPar(tournament) {
   return tournament.par && tournament.par.length === tournament.num_holes
     ? tournament.par
@@ -1179,13 +1197,15 @@ async function viewHome() {
   // somebody opening the site.
   const { data: recent } = await sb
     .from("tournaments")
-    .select("id, name, course_name, format, num_holes, status, created_at, teams(id, signed_at, scores(id, updated_at))")
+    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, par, handicap, skins_buy_in, " +
+            "teams(id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id, updated_at))")
     .order("created_at", { ascending: false })
     .limit(6);
   const candidates = (recent || []).filter((t) => tournamentState(t, t.teams) !== "never_started");
   const latest = candidates.find((t) => tournamentState(t, t.teams) === "live") || candidates[0] || null;
   const latestState = latest ? tournamentState(latest, latest.teams) : null;
   const latestTeams = latest ? (latest.teams || []).length : 0;
+  if (latest) latest.rows = buildLeaderboard(latest, latest.teams || []);
 
   // Only ever what this account actually created. Nothing device-local feeds
   // this list, so signing in on someone else's phone shows you your own
@@ -1213,35 +1233,67 @@ async function viewHome() {
 
   app.innerHTML = `
     ${trialBannerHtml(billing)}
-    <div class="idband">
-      <div class="idname" style="font-size:1.35rem">${
-        latest
-          ? (latestState === "live" ? "Playing now" : "Latest round")
-          : "Live scramble scoring"}</div>
-      <div class="idsub">${
-        latest
-          ? escapeHtml(`${latest.name}${latest.course_name ? ` · ${latest.course_name}` : ""}`)
-          : "One shared card per team. Every phone updates as scores go in."}</div>
-
-    </div>
-
     ${latest ? `
-      <a href="#/leaderboard/${latest.id}" class="panel mt-3 block">
-        <div class="listrow" style="border-bottom:0">
-          <span class="min-w-0 flex-1">
-            <span class="flex items-center gap-1.5">
+      <section class="hero">
+        <div class="hero-inner">
+          <div class="hero-left">
+            <div class="hero-pills">
               ${latestState === "live"
-                ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
-                : `<span class="pill">FINAL</span>`}
-              <span class="font-semibold text-sm truncate">${escapeHtml(latest.name)}</span>
-            </span>
-            <span class="block truncate mt-0.5" style="font-size:.72rem;color:var(--ink-3)">
-              ${latestTeams} team${latestTeams === 1 ? "" : "s"} · ${escapeHtml(formatOf(latest).label)} · ${latest.num_holes} holes
-            </span>
-          </span>
-          <span class="shrink-0" style="color:var(--ink-3)">${icon("arrow", 16)}</span>
+                ? `<span class="pill onair"><span class="dot"></span>PLAYING NOW</span>`
+                : `<span class="pill onair">FINAL</span>`}
+              <span class="pill men">${escapeHtml(formatOf(latest).label)}</span>
+            </div>
+            <div class="hero-row">
+              ${courseLogo(latest.course_name)
+                ? `<img class="hero-logo" src="${courseLogo(latest.course_name)}"
+                        alt="${escapeHtml(latest.course_name || "")}" />`
+                : `<div class="hero-logo hero-logo-text">${escapeHtml(initialsOf(latest.name))}</div>`}
+              <div class="min-w-0">
+                <h1 class="hero-name">${escapeHtml(latest.name)}</h1>
+                <div class="hero-meta">
+                  ${escapeHtml(new Date(latest.created_at).toLocaleDateString(undefined,
+                    { month: "short", day: "numeric", year: "numeric" }))}
+                  ${latest.course_name ? ` &nbsp;|&nbsp; ${escapeHtml(latest.course_name)}` : ""}
+                </div>
+                <a href="#/leaderboard/${latest.id}" class="hero-link">View tournament</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-card">
+            <div class="seg">
+              <span class="on">${formatOf(latest).ranks === "player" ? "Players" : "Teams"}</span>
+              <a href="#/leaderboard/${latest.id}">Full board</a>
+            </div>
+            ${(latest.rows || []).length ? `
+              <table class="dtable">
+                <thead>
+                  <tr>
+                    <th class="l" style="width:2.6rem">#</th>
+                    <th class="l">${formatOf(latest).ranks === "player" ? "Player" : "Team"}</th>
+                    <th class="rule" style="width:4rem">Total</th>
+                    <th class="rule" style="width:3.4rem">Thru</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${latest.rows.slice(0, 5).map((r) => `
+                    <tr class="tap" onclick="location.hash='#/leaderboard/${latest.id}'">
+                      <td class="l pos">${r.tied ? "T" : ""}${r.place}</td>
+                      <td class="l" style="max-width:0"><div class="nm truncate">${escapeHtml(r.name)}</div></td>
+                      <td class="rule"><span class="chip ${r.toPar < 0 ? "under" : "even"}">${r.thru ? toParLabel(r.toPar) : "–"}</span></td>
+                      <td class="rule num" style="color:var(--ink-2)">${r.thru || "–"}/${latest.num_holes}</td>
+                    </tr>`).join("")}
+                </tbody>
+              </table>` : `<p class="text-sm muted text-center py-6">No scores yet.</p>`}
+            <div style="padding:0 14px 14px">
+              <a href="#/leaderboard/${latest.id}" class="cardbtn" style="margin-top:0">View leaderboard</a>
+            </div>
+          </div>
         </div>
-      </a>` : ""}
+      </section>
+    ` : ""}
+
+    <div id="news-slot"></div>
 
     <div class="grid grid-cols-1 gap-2.5 mb-2">
       <a href="#/join" class="row-link">
@@ -1291,6 +1343,9 @@ async function viewHome() {
       </div>
     ` : ""}
   `;
+
+  // After the page is up, not before — a slow feed must never hold up scores.
+  renderNews();
 }
 
 // ---------- CREATE TOURNAMENT ----------
@@ -1900,6 +1955,56 @@ function rankedFor(players, mode) {
   return list;
 }
 
+// ---------- GOLF NEWS ----------
+// Headlines come from the golf-news Edge Function, which reads public feeds
+// server side because browsers can't fetch them cross-origin. Rendered after
+// the page so a slow or dead feed never delays the scores.
+
+const NEWS_URL = (window.TEEBOARD_CONFIG?.SUPABASE_URL || "") + "/functions/v1/golf-news";
+
+function newsTimeAgo(ts) {
+  if (!ts) return "";
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 60) return `${Math.max(1, mins)}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days === 1 ? "yesterday" : `${days}d ago`;
+}
+
+async function renderNews(slotId = "news-slot") {
+  const slot = document.getElementById(slotId);
+  if (!slot) return;
+  let items = [];
+  try {
+    const res = await fetch(NEWS_URL, { headers: { apikey: window.TEEBOARD_CONFIG?.SUPABASE_ANON_KEY || "" } });
+    if (!res.ok) throw new Error(String(res.status));
+    items = (await res.json()).items || [];
+  } catch {
+    return;                       // no headlines is fine; an error box is not
+  }
+  if (!items.length) return;
+
+  const [lead, ...rest] = items;
+  const card = (n, big) => `
+    <a href="${escapeHtml(n.link)}" target="_blank" rel="noopener noreferrer"
+       class="newscard${big ? " lead" : ""}">
+      <span class="newssrc">${escapeHtml(n.source)}</span>
+      <span class="newstitle">${escapeHtml(n.title)}</span>
+      ${big && n.summary ? `<span class="newssum">${escapeHtml(n.summary)}</span>` : ""}
+      <span class="newsdate">${escapeHtml(newsTimeAgo(n.publishedAt))}</span>
+    </a>`;
+
+  slot.innerHTML = `
+    <div class="sectionbar" style="margin-top:26px">
+      <span class="t">Latest news</span><span class="rule"></span>
+    </div>
+    <div class="newsgrid">
+      ${card(lead, true)}
+      <div class="newscol">${rest.slice(0, 4).map((n) => card(n, false)).join("")}</div>
+    </div>`;
+}
+
 // ---------- TOURNAMENT DIRECTORY ----------
 // A public board of every tournament, live and finished. Anyone can watch;
 // anyone playing in a live one can check in from here rather than needing the
@@ -1991,10 +2096,10 @@ async function viewTournaments(tab) {
                   </tr>`).join("")}
               </tbody>
             </table>
-            ${teamCount > rows.length
-              ? `<a href="#/leaderboard/${t.id}" class="block text-center text-xs mt-2.5"
-                    style="color:var(--blue);font-weight:600">View full leaderboard</a>` : ""}
-          ` : `<p class="text-sm muted text-center py-3">No scores yet.</p>`}
+            <a href="#/leaderboard/${t.id}" class="cardbtn">View leaderboard</a>
+          ` : `
+            <p class="text-sm muted text-center py-6">No scores yet.</p>
+            <a href="#/leaderboard/${t.id}" class="cardbtn">View participants</a>`}
         </div>
       </div>`;
   }

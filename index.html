@@ -785,6 +785,116 @@
   .cardgrid { display: grid; gap: 14px; grid-template-columns: 1fr; }
   @media (min-width: 640px)  { .cardgrid { grid-template-columns: repeat(2, 1fr); } }
   @media (min-width: 1024px) { .cardgrid { grid-template-columns: repeat(3, 1fr); } }
+
+  /* ------------------------------------------------------------------
+     Featured-round hero. The reference leads its home page with the
+     tournament being played — big italic name, status pills, and a card
+     beside it holding the top of the board — rather than a list of links.
+     ------------------------------------------------------------------ */
+  .hero {
+    background:
+      radial-gradient(120% 130% at 12% 0%, #24423A 0%, transparent 58%),
+      linear-gradient(135deg, #12181E 0%, #17231D 48%, #0F1317 100%);
+    color: #fff;
+    margin: -16px -16px 0;
+    padding: 0;
+    border-bottom: 1px solid rgba(255,255,255,.07);
+  }
+  .hero-inner {
+    max-width: 76rem; margin: 0 auto; padding: 30px 16px 34px;
+    display: grid; gap: 22px; align-items: center;
+    grid-template-columns: 1fr;
+  }
+  @media (min-width: 900px) {
+    .hero-inner { grid-template-columns: 1.15fr .85fr; gap: 40px; padding: 44px 16px 48px; }
+  }
+  .hero-pills { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .hero-name {
+    font-family: 'Barlow', sans-serif; font-style: italic; font-weight: 700;
+    font-size: 2.3rem; line-height: 1.04; letter-spacing: -.01em;
+  }
+  @media (min-width: 900px) { .hero-name { font-size: 3.1rem; } }
+  .hero-meta { margin-top: 12px; font-size: .92rem; color: rgba(255,255,255,.66); }
+  .hero-link {
+    display: inline-block; margin-top: 18px;
+    font-size: .9rem; font-weight: 600; color: #fff;
+    border-bottom: 2px solid var(--blue); padding-bottom: 2px;
+  }
+  .hero-crest {
+    width: 76px; height: 76px; border-radius: 12px; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.6rem;
+    color: var(--ink-900); margin-bottom: 18px;
+  }
+  /* The board card lifts off the hero, as theirs does. */
+  .hero-card {
+    background: var(--surface); color: var(--ink);
+    border-radius: 14px; overflow: hidden;
+    box-shadow: 0 18px 46px rgba(0,0,0,.34);
+  }
+  .hero-card .seg { width: 100%; }
+  .hero-card .seg > * { flex: 1; text-align: center; }
+
+  /* Full-width solid action at the foot of each card, as the reference has. */
+  .cardbtn {
+    display: block; width: 100%; margin-top: 14px;
+    background: var(--navy); color: #fff;
+    padding: 13px 16px; border-radius: 9px;
+    font-size: .92rem; font-weight: 700; text-align: center;
+  }
+  .cardbtn:hover { background: var(--ink-700); }
+
+  /* The Teams / Players switch spans the card, like theirs. */
+  .tcard .seg { display: flex; width: 100%; }
+  .tcard .seg > * { flex: 1; text-align: center; padding: 8px 10px; }
+
+  .hero-row { display: flex; align-items: flex-start; gap: 18px; }
+  .hero-logo {
+    width: 84px; height: 84px; flex: none; border-radius: 14px;
+    background: #fff; object-fit: contain; padding: 6px;
+    box-shadow: 0 8px 22px rgba(0,0,0,.3);
+  }
+  .hero-logo-text {
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.7rem;
+    color: var(--ink-900);
+  }
+  @media (max-width: 560px) {
+    .hero-logo { width: 60px; height: 60px; border-radius: 11px; }
+    .hero-row { gap: 13px; }
+  }
+
+  /* News. The feeds carry no images, so these are typographic cards — a
+     source tag, the headline, and when it landed. An empty image box would
+     look worse than none. */
+  .newsgrid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 860px) { .newsgrid { grid-template-columns: 1.1fr .9fr; } }
+  .newscol { display: grid; gap: 12px; align-content: start; }
+
+  .newscard {
+    display: flex; flex-direction: column; gap: 7px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; padding: 15px 16px;
+    transition: border-color .15s ease, transform .1s ease;
+  }
+  .newscard:hover { border-color: var(--line-2); }
+  .newscard:active { transform: scale(.995); }
+  .newscard.lead {
+    background: linear-gradient(150deg, var(--navy) 0%, var(--navy-lo) 100%);
+    border-color: transparent; color: #fff; padding: 22px;
+    justify-content: flex-end; min-height: 230px;
+  }
+  .newssrc {
+    font-family: 'Barlow', sans-serif; text-transform: uppercase;
+    font-size: .68rem; font-weight: 700; letter-spacing: .1em;
+    color: var(--blue);
+  }
+  .newscard.lead .newssrc { color: var(--grass-400); }
+  .newstitle { font-weight: 700; font-size: .96rem; line-height: 1.32; letter-spacing: -.01em; }
+  .newscard.lead .newstitle { font-size: 1.45rem; line-height: 1.2; }
+  .newssum { font-size: .85rem; line-height: 1.45; color: rgba(255,255,255,.6); }
+  .newsdate { font-size: .72rem; color: var(--ink-3); }
+  .newscard.lead .newsdate { color: rgba(255,255,255,.45); }
 </style>
 </head>
 <body class="min-h-screen">
@@ -850,6 +960,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925l"></script>
+  <script src="app.js?v=20260925o"></script>
 </body>
 </html>
