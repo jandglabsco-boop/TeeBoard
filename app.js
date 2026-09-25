@@ -313,6 +313,14 @@ function tournamentFinished(tournament, teams) {
   return allCardsSigned(teams);
 }
 
+// Every tournament column except join_code. Anonymous visitors have no read
+// privilege on the code — that's what stops the public board from handing
+// out entry to every round — so `select("*")` is refused for them. Name the
+// columns instead.
+const TOURNAMENT_COLS =
+  "id, name, course_name, num_holes, par, status, created_at, created_by, " +
+  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in";
+
 function tournamentPar(tournament) {
   return tournament.par && tournament.par.length === tournament.num_holes
     ? tournament.par
@@ -1807,7 +1815,7 @@ async function viewTournaments() {
     .from("tournaments")
     // signed_at and the score ids are what decide whether a round is still
     // running, so they have to come back with the list.
-    .select("id, name, course_name, format, num_holes, start_hole, status, join_code, created_at, teams(id, signed_at, scores(id))")
+    .select("id, name, course_name, format, num_holes, start_hole, status, created_at, teams(id, signed_at, scores(id))")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1855,9 +1863,11 @@ async function viewTournaments() {
             ${isLive ? "Watch live" : "Leaderboard"}
           </a>
           ${isLive
-            // Hands off to the normal join flow with the code already filled
-            // in, so checking in is the same roster search players know.
-            ? `<a href="#/join/${encodeURIComponent(t.join_code)}" class="btn-green flex-1 text-sm">Check in</a>`
+            // Deliberately no code in this link. The board is public, so
+            // carrying the code here would let anyone browsing walk into any
+            // round and start entering scores. The code comes from the
+            // organizer; this just opens the box to type it into.
+            ? `<a href="#/join" class="btn-green flex-1 text-sm">Check in</a>`
             : ""}
         </div>
       </div>`;
@@ -3153,7 +3163,7 @@ async function viewAdmin(tournamentId) {
   app.innerHTML = loadingHtml();
 
   const [{ data: tournament, error }, user] = await Promise.all([
-    sb.from("tournaments").select("*").eq("id", tournamentId).single(),
+    sb.from("tournaments").select(TOURNAMENT_COLS).eq("id", tournamentId).single(),
     getUser(),
   ]);
   if (error || !tournament) {
@@ -3165,6 +3175,16 @@ async function viewAdmin(tournamentId) {
   // pre-accounts tournaments; those have since been assigned real owners.
   // Mirrored by RLS, so a forged client can't get past it either.
   const isOwner = !!user && tournament.created_by === user.id;
+
+  // The join code is deliberately unreadable to anonymous visitors, so it
+  // isn't in TOURNAMENT_COLS. The organizer needs it — for the code display,
+  // the QR and the share link — and is signed in, so fetch it separately
+  // once we know who they are.
+  if (isOwner) {
+    const { data: codeRow } = await sb
+      .from("tournaments").select("join_code").eq("id", tournamentId).single();
+    if (codeRow) tournament.join_code = codeRow.join_code;
+  }
 
   // An owner whose trial and subscription have both lapsed sees the paywall
   // rather than a dashboard whose every control would be rejected by RLS.
@@ -3829,10 +3849,15 @@ function viewJoin(prefillCode) {
     const btn = e.target.querySelector("button");
     btn.disabled = true;
     btn.textContent = "Searching…";
-    const { data: tournament, error } = await sb.from("tournaments").select("*").eq("join_code", code).maybeSingle();
+    // Looked up through the RPC rather than a filter on join_code: anonymous
+    // visitors can't read that column at all, which is what keeps the public
+    // board from being a list of ways into other people's rounds. Presenting
+    // the right code is what returns the row.
+    const { data, error } = await sb.rpc("player_find_tournament", { p_code: code });
+    const tournament = Array.isArray(data) ? data[0] : data;
     btn.disabled = false;
     btn.textContent = "Find tournament";
-    if (error || !tournament) {
+    if (error || !tournament || !tournament.id) {
       toast("No tournament found with that code", true);
       return;
     }
@@ -4324,7 +4349,7 @@ async function viewTeam(teamId) {
 async function viewLeaderboard(tournamentId) {
   app.innerHTML = loadingHtml();
 
-  const { data: tournament, error } = await sb.from("tournaments").select("*").eq("id", tournamentId).single();
+  const { data: tournament, error } = await sb.from("tournaments").select(TOURNAMENT_COLS).eq("id", tournamentId).single();
   if (error || !tournament) {
     app.innerHTML = notFoundHtml("Tournament");
     return;
@@ -4358,7 +4383,6 @@ async function viewLeaderboard(tournamentId) {
         <div class="flex items-center gap-2 mt-4 pt-3.5" style="border-top:1px solid rgba(255,255,255,.09)">
           <span class="pill on-dark">${escapeHtml(fmt.label)}</span>
           <span class="pill on-dark">${tournament.num_holes} holes</span>
-          <span class="pill on-dark">Code ${escapeHtml(tournament.join_code)}</span>
           ${finished ? `<span class="pill on-dark">Completed</span>` : ""}
         </div>
       </section>
@@ -4401,7 +4425,7 @@ async function viewLeaderboard(tournamentId) {
           <div class="p-8 text-center">
             <div class="mx-auto mb-3 flex items-center justify-center" style="color:var(--ink-3)">${icon("users", 30)}</div>
             <p class="font-semibold mb-1">No teams yet</p>
-            <p class="text-sm muted">Share code <b class="num">${escapeHtml(tournament.join_code)}</b> to get players on the board.</p>
+            <p class="text-sm muted">Players join with the code from the organizer.</p>
           </div>` : ""}
         ${rows.map((r) => {
           const leading = r.place === 1 && r.thru > 0;

@@ -462,3 +462,28 @@ alter table scores drop constraint if exists scores_team_id_hole_number_key;
 alter table organizer_billing
   add column if not exists can_view_stats boolean not null default false;
 update organizer_billing set can_view_stats = true where is_exempt;
+
+-- Join codes are no longer readable by anonymous visitors. The public
+-- tournaments board made every code discoverable: the anon key ships inside
+-- the page, so one request to PostgREST returned every code and with it a way
+-- into any live round.
+--
+-- RLS is row-level, so this is a column privilege. Anonymous visitors may read
+-- everything about a tournament except its code; signed-in organizers keep
+-- full access, which is how the admin page still shows the code and QR.
+revoke select on tournaments from anon;
+grant select (
+  id, name, course_name, num_holes, par, status, created_at, created_by,
+  start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in
+) on tournaments to anon;
+
+-- Joining still needs a lookup by code, and filtering on a column requires
+-- reading it. This runs as owner, so it can -- but only for someone who
+-- already presented the right code. Knowing the code is what buys the row.
+create or replace function public.player_find_tournament(p_code text)
+returns setof tournaments
+language sql stable security definer set search_path to 'public'
+as $$
+  select * from tournaments where join_code = upper(btrim(p_code)) limit 1;
+$$;
+grant execute on function public.player_find_tournament(text) to anon, authenticated;
