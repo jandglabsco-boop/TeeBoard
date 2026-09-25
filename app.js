@@ -293,6 +293,26 @@ function stablefordPoints(netStrokes, par) {
   return Math.max(0, 2 + (par - netStrokes));
 }
 
+// A round is over once every card that was started has been signed, whether
+// or not the organizer remembered to close it. Showing LIVE next to a
+// finished round is how a board ends up with a dozen "live" tournaments that
+// all ended weeks ago.
+//
+// Teams that registered but never put a score in are ignored: a no-show
+// shouldn't keep a completed round pinned to the live board forever. A
+// tournament nobody has scored in is not finished — it hasn't begun.
+function allCardsSigned(teams) {
+  const played = (teams || []).filter((t) => (t.scores || []).length > 0);
+  if (!played.length) return false;
+  return played.every((t) => !!t.signed_at);
+}
+
+function tournamentFinished(tournament, teams) {
+  if (!tournament) return false;
+  if (tournament.status !== "active") return true;   // organizer closed it
+  return allCardsSigned(teams);
+}
+
 function tournamentPar(tournament) {
   return tournament.par && tournament.par.length === tournament.num_holes
     ? tournament.par
@@ -1785,7 +1805,9 @@ async function viewTournaments() {
   // round trip per tournament.
   const { data, error } = await sb
     .from("tournaments")
-    .select("id, name, course_name, format, num_holes, start_hole, status, join_code, created_at, teams(id)")
+    // signed_at and the score ids are what decide whether a round is still
+    // running, so they have to come back with the list.
+    .select("id, name, course_name, format, num_holes, start_hole, status, join_code, created_at, teams(id, signed_at, scores(id))")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1799,13 +1821,15 @@ async function viewTournaments() {
   }
 
   const all = data || [];
-  const live = all.filter((t) => t.status === "active");
-  const past = all.filter((t) => t.status !== "active");
+  // A round with every card signed belongs under Completed, not Live, even
+  // if the organizer never got round to closing it.
+  const live = all.filter((t) => !tournamentFinished(t, t.teams));
+  const past = all.filter((t) => tournamentFinished(t, t.teams));
 
   function row(t) {
     const fmt = formatOf(t);
     const teams = (t.teams || []).length;
-    const isLive = t.status === "active";
+    const isLive = !tournamentFinished(t, t.teams);
     const when = new Date(t.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const holes = t.start_hole === 10 ? `${t.num_holes} holes · back` : `${t.num_holes} holes`;
 
@@ -1816,7 +1840,7 @@ async function viewTournaments() {
             <div class="flex items-center gap-2 mb-1">
               ${isLive
                 ? `<span class="pill live"><span class="dot"></span>LIVE</span>`
-                : `<span class="pill">FINAL</span>`}
+                : `<span class="pill">COMPLETED</span>`}
               <span class="eyebrow">${when}</span>
             </div>
             <div class="display" style="font-size:1.25rem">${escapeHtml(t.name)}</div>
@@ -4305,10 +4329,6 @@ async function viewLeaderboard(tournamentId) {
     app.innerHTML = notFoundHtml("Tournament");
     return;
   }
-  headerSub.innerHTML = tournament.status === "active"
-    ? `<span class="pill live"><span class="dot"></span>Live</span>`
-    : `<span class="pill on-dark">Final</span>`;
-
   const par = tournamentPar(tournament);
 
   async function render() {
@@ -4319,8 +4339,16 @@ async function viewLeaderboard(tournamentId) {
 
     const rows = buildLeaderboard(tournament, teams);
     const fmt = formatOf(tournament);
-    const isLive = tournament.status === "active";
+    // Every card signed means the round is over, even if nobody closed it.
+    const finished = tournamentFinished(tournament, teams);
+    const isLive = !finished;
     const pot = fmt.metric === "skins" ? skinsPayout(tournament, rows) : null;
+
+    // Set here rather than before the fetch, because whether it's live
+    // depends on the cards we just loaded.
+    headerSub.innerHTML = finished
+      ? `<span class="pill on-dark">Final</span>`
+      : `<span class="pill live"><span class="dot"></span>Live</span>`;
 
     app.innerHTML = `
       <section class="panel-dark px-5 pt-5 pb-5 mb-2.5">
@@ -4331,7 +4359,7 @@ async function viewLeaderboard(tournamentId) {
           <span class="pill on-dark">${escapeHtml(fmt.label)}</span>
           <span class="pill on-dark">${tournament.num_holes} holes</span>
           <span class="pill on-dark">Code ${escapeHtml(tournament.join_code)}</span>
-          ${!isLive ? `<span class="pill on-dark">Closed</span>` : ""}
+          ${finished ? `<span class="pill on-dark">Completed</span>` : ""}
         </div>
       </section>
 
@@ -4405,7 +4433,7 @@ async function viewLeaderboard(tournamentId) {
       </div>
 
       <div class="flex items-center justify-center gap-2 mt-3.5">
-        <span class="eyebrow">${isLive ? "Updating live as scores come in" : "Tournament closed"}</span>
+        <span class="eyebrow">${finished ? "Tournament completed" : "Updating live as scores come in"}</span>
       </div>
       <p class="text-center text-xs muted-2 mt-2">
         ${fmt.metric === "points" ? "Most points wins"
