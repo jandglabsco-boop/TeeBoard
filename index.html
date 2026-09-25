@@ -1004,6 +1004,63 @@
     padding: 5px 12px; border-radius: 7px; font-size: .78rem; font-weight: 600;
   }
   .sc-b:hover { background: rgba(255,255,255,.22); }
+
+  /* ---- Create-match form ------------------------------------------------
+     The form was one flat stack of boxes. Grouping it into titled sections,
+     putting the short fields side by side and giving the page a proper head
+     makes it read like the rest of the app instead of a database form. */
+  .formhead { margin-bottom: 14px; }
+  .formhead h1 {
+    font-family: 'Barlow', sans-serif; font-style: italic; font-weight: 700;
+    font-size: 1.9rem; line-height: 1.1; letter-spacing: -.01em;
+  }
+  .formhead p { font-size: .88rem; color: var(--ink-2); margin-top: 6px; }
+
+  .fsection { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 4px; }
+  .fsection:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .fsection > .fs-t {
+    font-family: 'Barlow', sans-serif; font-size: .72rem; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+    margin-bottom: 11px; display: block;
+  }
+
+  /* Short fields belong on one line, not stacked a screen tall. */
+  .frow { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 460px) { .frow { grid-template-columns: 1fr; } }
+
+  .betrow { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 2px; }
+  .inputprefix { position: relative; display: flex; align-items: center; }
+  .inputprefix > span {
+    position: absolute; left: 11px; color: var(--ink-3); font-weight: 600; pointer-events: none;
+  }
+  .inputprefix > input { padding-left: 26px; width: 100%; }
+
+  /* Player rows read as a roster, not a pile of inputs. */
+  #match-players .prow {
+    display: flex; gap: 9px; align-items: center;
+    padding: 8px; border-radius: 10px; background: var(--surface-2); margin-bottom: 8px;
+  }
+  #match-players .pnum {
+    width: 26px; height: 26px; flex: none; border-radius: 7px;
+    background: var(--navy); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: .78rem;
+  }
+  #match-players input { background: var(--surface); }
+
+  /* Pops and net, shown while entering scores. */
+  .popdot {
+    display: inline-block; margin-left: 6px; color: var(--under);
+    font-size: .8rem; letter-spacing: .05em; vertical-align: middle;
+  }
+  .netcell {
+    display: inline-flex; align-items: center; gap: 3px; margin-left: auto; margin-right: 8px;
+    font-size: .8rem; color: var(--ink-2); white-space: nowrap;
+  }
+  .np-arrow { opacity: .5; }
+  .np-net { font-weight: 700; color: var(--under); font-variant-numeric: tabular-nums; }
+
+  .pill.bet { background: rgba(255,255,255,.14); border-color: transparent; color: #fff; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1096,6 +1153,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925w"></script>
+  <script src="app.js?v=20260925z"></script>
 </body>
 </html>

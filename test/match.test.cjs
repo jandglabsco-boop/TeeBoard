@@ -112,5 +112,29 @@ const si9 = [1,2,3,4,5,6,7,8,9];
   check('  leader still A', m.leader.name, 'A');
 }
 
+
+// ---- plus handicaps ----
+{
+  const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
+  // +4 over 9 holes plays 2: gives a stroke back on the two hardest holes.
+  const a = sandbox.strokeAllocation(T9, -4);
+  check('plus 4 over 9 holes gives back 2 strokes', a.filter(v => v === -1).length, 2);
+  check('  on the two hardest holes (SI 1 and 2)', [a[0], a[1]].join(','), '-1,-1');
+  check('  and nothing on the rest', a.slice(2).every(v => v === 0), true);
+
+  // scratch is unchanged
+  check('scratch gets nothing', sandbox.strokeAllocation(T9, 0).every(v => v === 0), true);
+
+  // a plus player in a match becomes the reference: the other side gets the gap
+  const side = (id,name,players,signed) => ({ id, name,
+    team_members: players.map(p=>({id:p.id,player_name:p.name,handicap:p.hc})),
+    scores: players.flatMap(p => Object.entries(p.s||{}).map(([h,v]) => ({hole_number:+h, strokes:v, team_member_id:p.id}))),
+    signed_at: signed?'x':null });
+  const pro  = {id:'p',name:'Pro',hc:-2,s:{1:4}};
+  const hack = {id:'h',name:'Hack',hc:16,s:{1:4}};
+  const m = sandbox.buildMatch({...T9, format:'match_singles'}, [side('A','A',[pro]), side('B','B',[hack])]);
+  check('vs a +2, an 18-diff still allocates to the higher handicap', m.holes[0].winner, 1);
+  check('  plus player plays off scratch in the match (net = gross)', m.holes[0].netA, 4);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);

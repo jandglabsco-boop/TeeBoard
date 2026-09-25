@@ -255,7 +255,29 @@ const FORMATS = {
     match: true, sideSize: 2,
     blurb: "Two against two, one ball per side, alternating shots. A single score per side per hole.",
   },
+
+  // The same three shapes played for a total instead of hole by hole. Two
+  // sides, lowest net round wins — head-to-head stroke play.
+  stroke_singles: {
+    label: "Singles Stroke Play", scoring: "player", ranks: "player", metric: "toPar",
+    headToHead: true, sideSize: 1,
+    blurb: "One against one, counting every shot. Lowest net total over the round wins.",
+  },
+  stroke_fourball: {
+    label: "Four-Ball Stroke Play", scoring: "player", ranks: "team", metric: "toPar",
+    headToHead: true, sideSize: 2,
+    blurb: "Two a side, own ball, the side counting its better net score on each hole. Lowest total wins.",
+  },
+  stroke_foursomes: {
+    label: "Foursomes Stroke Play", scoring: "team", ranks: "team", metric: "toPar",
+    headToHead: true, sideSize: 2,
+    blurb: "Two a side, one ball, alternating shots. Lowest net total over the round wins.",
+  },
 };
+
+// Everything the match screen can set up: two sides, either decided hole by
+// hole or on a total.
+const isTwoSidedFormat = (t) => { const f = formatOf(t); return !!(f.match || f.headToHead); };
 
 const isMatchFormat = (t) => !!formatOf(t).match;
 
@@ -273,10 +295,15 @@ const isPlayerScored = (t) => formatOf(t).scoring === "player";
 function strokeAllocation(tournament, handicap) {
   const n = tournament.num_holes;
   const alloc = Array(n).fill(0);
-  if (!handicap || handicap <= 0) return alloc;
+  if (handicap == null || handicap === 0) return alloc;
 
+  // A plus handicap is better than scratch, so the player gives strokes back
+  // rather than receiving them: the allocation is negative and lands on the
+  // same hardest-first order. A +2 adds a shot on the two hardest holes.
   const playing = Math.round(n === 9 ? handicap / 2 : handicap);
-  if (playing <= 0) return alloc;
+  if (playing === 0) return alloc;
+  const sign = playing < 0 ? -1 : 1;
+  const magnitude = Math.abs(playing);
 
   const si = tournament.handicap && tournament.handicap.length === n
     ? tournament.handicap
@@ -287,9 +314,9 @@ function strokeAllocation(tournament, handicap) {
   const rank = Array(n);
   order.forEach((holeIdx, position) => { rank[holeIdx] = position + 1; });
 
-  const base = Math.floor(playing / n);
-  const extra = playing % n;
-  for (let i = 0; i < n; i++) alloc[i] = base + (rank[i] <= extra ? 1 : 0);
+  const base = Math.floor(magnitude / n);
+  const extra = magnitude % n;
+  for (let i = 0; i < n; i++) alloc[i] = sign * (base + (rank[i] <= extra ? 1 : 0));
   return alloc;
 }
 
@@ -379,7 +406,7 @@ function tournamentFinished(tournament, teams) {
 // columns instead.
 const TOURNAMENT_COLS =
   "id, name, course_name, num_holes, par, status, created_at, created_by, " +
-  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in, is_public, single_scorer";
+  "start_hole, handicap, yardage, tee_name, course_id, format, skins_buy_in, is_public, single_scorer, bet_unit, bet_amount";
 
 // Same list for an embedded select — `teams(*, tournaments(...))`. PostgREST
 // wants no spaces inside the parentheses.
@@ -412,6 +439,34 @@ function tournamentPar(tournament) {
 // Turns raw team rows into a sorted leaderboard with place/tied set. Shared by
 // the live leaderboard and the admin top-3 export, so the two can never
 // disagree about who actually won.
+// What the group agreed to play for. A record, not a transaction — no money
+// moves through TeeBoard, which the wording is careful to keep true.
+function betLabel(tournament) {
+  if (!tournament?.bet_unit || !tournament?.bet_amount) return null;
+  const amt = Number(tournament.bet_amount);
+  const money = Number.isInteger(amt) ? `$${amt}` : `$${amt.toFixed(2)}`;
+  return { hole: `${money} a hole`, nine: `${money} a nine`, round: `${money} the round` }[tournament.bet_unit] || null;
+}
+
+// Golfers say "plus 2", not "minus 2" — a handicap better than scratch is
+// stored negative but never shown that way.
+function handicapLabel(h) {
+  if (h == null) return null;
+  const v = Number(h);
+  if (!Number.isFinite(v)) return null;
+  const n = Number.isInteger(v) ? v : Number(v.toFixed(1));
+  if (n === 0) return "Scratch";
+  return n < 0 ? `Plus ${Math.abs(n)}` : `Handicap ${n}`;
+}
+// Compact form for a list of partners: "Bill (12)", "Pro (+2)".
+function handicapShort(h) {
+  if (h == null) return "";
+  const v = Number(h);
+  if (!Number.isFinite(v)) return "";
+  const n = Number.isInteger(v) ? v : Number(v.toFixed(1));
+  return n < 0 ? ` (+${Math.abs(n)})` : ` (${n})`;
+}
+
 // ---------- MATCH PLAY ----------
 //
 // A match is two sides playing each other hole by hole. Unlike the stroke
@@ -3367,7 +3422,11 @@ function renderCreateForm(user, billing, opts = {}) {
     ${trialBannerHtml(billing)}
     <div class="mb-4">
       <div class="eyebrow mb-1">Organizer · ${escapeHtml(user.email)}</div>
-      <h1 class="text-2xl">${opts.match ? "Create a match" : "Create a tournament"}</h1>
+      ${opts.match ? `
+        <div class="formhead">
+          <h1>Create a match</h1>
+          <p>Two sides, your course, and who's playing. It's ready to score as soon as you're done.</p>
+        </div>` : `<h1 class="text-2xl">Create a tournament</h1>`}
     </div>
     <form id="create-form" class="card p-5 flex flex-col gap-5">
       ${opts.match ? "" : `
@@ -3379,7 +3438,6 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label">Course</label>
         <input id="course-input" name="course" placeholder="Search your course… e.g. Pine Valley" autocomplete="off" />
         <div id="course-results" class="hidden absolute z-20 left-0 right-0 mt-1 card max-h-64 overflow-y-auto"></div>
-        <p id="course-attribution" class="text-xs muted-2 mt-1.5 leading-relaxed">Pulls real hole-by-hole par from <a href="https://opengolfapi.org" target="_blank" class="link-underline">OpenGolfAPI</a> (free &amp; open, ODbL). Not listed? No problem — every hole defaults to par 4.</p>
         <p id="course-selected-note" class="hidden text-xs font-semibold mt-2 p-2 rounded-lg" style="color:var(--grass-700);background:var(--grass-100)"></p>
         <div id="course-unmatched" class="hidden text-xs mt-2 p-3 rounded-lg" style="color:var(--under);background:rgba(214,37,43,.08);border:1px solid rgba(214,37,43,.25)"></div>
       </div>
@@ -3387,7 +3445,7 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label">Format</label>
         <select id="format-select" name="format">
           ${Object.entries(FORMATS)
-            .filter(([, f]) => (opts.match ? f.match : !f.match))
+            .filter(([, f]) => (opts.match ? (f.match || f.headToHead) : !(f.match || f.headToHead)))
             .map(([k, f]) => `<option value="${k}">${f.label}</option>`).join("")}
         </select>
         <p id="format-blurb" class="text-xs muted-2 mt-1.5 leading-relaxed"></p>
@@ -3422,25 +3480,52 @@ function renderCreateForm(user, billing, opts = {}) {
           so carried-over holes make the remaining skins worth more. Leave blank to play for pride.
         </p>
       </div>
-      <div>
-        <label class="field-label">Holes</label>
-        <select id="holes-select" name="holes">
-          <option value="18">18 holes</option>
-          <option value="9">9 holes</option>
-        </select>
-      </div>
-      <div id="nine-wrap" class="hidden">
-        <label class="field-label">Which nine?</label>
-        <select id="nine-select" name="nine">
-          <option value="front">Front nine (holes 1–9)</option>
-          <option value="back">Back nine (holes 10–18)</option>
-        </select>
+      <div class="${opts.match ? "frow" : ""}">
+        <div>
+          <label class="field-label" for="holes-select">Holes</label>
+          <select id="holes-select" name="holes">
+            <option value="18">18 holes</option>
+            <option value="9">9 holes</option>
+          </select>
+        </div>
+        <div id="nine-wrap" class="hidden">
+          <label class="field-label" for="nine-select">Which nine?</label>
+          <select id="nine-select" name="nine">
+            <option value="front">Front nine (holes 1–9)</option>
+            <option value="back">Back nine (holes 10–18)</option>
+          </select>
+        </div>
       </div>
       ${opts.match ? `
         <!-- Players are entered here rather than added afterwards: a match is
              two named sides, and there is nothing to manage before they exist.
              Team names are not asked for - a side is who is playing on it. -->
         <div id="match-players"></div>
+
+        <label class="checkrow">
+          <input type="checkbox" id="bet-on" />
+          <span>
+            <span class="cr-t">Playing for something</span>
+            <span class="cr-s">Records what the group agreed so the card can settle it. No money moves through TeeBoard.</span>
+          </span>
+        </label>
+        <div id="bet-wrap" class="hidden betrow">
+          <div>
+            <label class="field-label" for="bet-amount">Stake</label>
+            <div class="inputprefix">
+              <span>$</span>
+              <input id="bet-amount" type="number" min="1" max="10000" step="1" placeholder="5" />
+            </div>
+          </div>
+          <div>
+            <label class="field-label" for="bet-unit">Per</label>
+            <select id="bet-unit">
+              <option value="hole">Hole</option>
+              <option value="nine">Nine</option>
+              <option value="round" selected>Round</option>
+            </select>
+          </div>
+        </div>
 
         <label class="checkrow">
           <input type="checkbox" id="single-scorer" />
@@ -3474,11 +3559,13 @@ function renderCreateForm(user, billing, opts = {}) {
     const slot = (i, label) => {
       const prior = kept[i] || { name: "", hcp: "" };
       return `
-        <div class="flex gap-2 mb-2" data-player="${i}">
+        <div class="prow" data-player="${i}">
+          <span class="pnum">${i + 1}</span>
           <input data-pname placeholder="${escapeHtml(label)}" value="${escapeHtml(prior.name)}"
                  class="flex-1 min-w-0" aria-label="${escapeHtml(label)}" />
-          <input data-phcp type="number" min="0" max="54" step="0.1" placeholder="HCP"
-                 value="${escapeHtml(prior.hcp)}" style="width:5.5rem" aria-label="Handicap for ${escapeHtml(label)}" />
+          <input data-phcp type="number" min="-10" max="54" step="0.1" placeholder="HCP"
+                 value="${escapeHtml(prior.hcp)}" style="width:5rem"
+                 aria-label="Handicap for ${escapeHtml(label)} — use a minus for a plus handicap" />
         </div>`;
     };
 
@@ -3487,7 +3574,7 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label">Players</label>
         ${slot(0, "Player 1")}
         ${slot(1, "Player 2")}
-        <p class="text-xs muted-2 mt-1">Handicaps are optional. With them, the match plays off the difference — the lower handicap gives shots.</p>`;
+        <p class="text-xs muted-2 mt-1">Optional. The match plays off the difference, so the lower handicap gives shots. For a plus handicap enter a minus — a plus 2 is <b>-2</b>.</p>`;
     } else {
       wrap.innerHTML = `
         <label class="field-label">Side one</label>
@@ -3496,10 +3583,16 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label mt-3">Side two</label>
         ${slot(2, "Player 3")}
         ${slot(3, "Player 4")}
-        <p class="text-xs muted-2 mt-1">Handicaps are optional. With them, everyone plays off the lowest handicap in the match.</p>`;
+        <p class="text-xs muted-2 mt-1">Optional. Everyone plays off the lowest handicap in the match. For a plus handicap enter a minus — a plus 2 is <b>-2</b>.</p>`;
     }
   }
-  if (opts.match) { renderPlayerSlots(); formatSelect.addEventListener("change", renderPlayerSlots); }
+  if (opts.match) {
+    renderPlayerSlots();
+    formatSelect.addEventListener("change", renderPlayerSlots);
+    const betOn = document.getElementById("bet-on");
+    const betWrap = document.getElementById("bet-wrap");
+    betOn.addEventListener("change", () => betWrap.classList.toggle("hidden", !betOn.checked));
+  }
   const formatBlurb = document.getElementById("format-blurb");
   const buyinWrap = document.getElementById("buyin-wrap");
   const refreshFormatBlurb = () => {
@@ -3801,10 +3894,19 @@ function renderCreateForm(user, billing, opts = {}) {
       const bad = matchPlayers.find((p) => {
         if (p.handicap === "") return false;
         const v = Number(p.handicap);
-        return !Number.isFinite(v) || v < 0 || v > 54;
+        return !Number.isFinite(v) || v < -10 || v > 54;
       });
       if (bad) {
-        toast(`Handicap for ${bad.name} must be between 0 and 54, or left blank.`, true);
+        toast(`Handicap for ${bad.name} must be between -10 (plus 10) and 54, or left blank.`, true);
+        return;
+      }
+    }
+
+    const betOn = document.getElementById("bet-on");
+    if (opts.match && betOn?.checked) {
+      const amt = parseFloat(document.getElementById("bet-amount").value);
+      if (!Number.isFinite(amt) || amt <= 0 || amt > 10000) {
+        toast("Enter a stake between $1 and $10,000, or turn the bet off.", true);
         return;
       }
     }
@@ -3876,6 +3978,8 @@ function renderCreateForm(user, billing, opts = {}) {
           course_id: (courseScorecard && courseScorecard.courseId) || null,
           is_public: document.getElementById("visibility-select").value !== "private",
           single_scorer: !!document.getElementById("single-scorer")?.checked,
+          bet_unit: betOn?.checked ? document.getElementById("bet-unit").value : null,
+          bet_amount: betOn?.checked ? (parseFloat(document.getElementById("bet-amount").value) || null) : null,
           created_by: user.id,
         })
         .select()
@@ -4120,8 +4224,9 @@ async function viewAdmin(tournamentId) {
             <!-- Course handicap. Optional everywhere, but it is what allocates
                  pops in a match, so the field sits next to the name rather
                  than behind another screen. -->
-            <input id="add-player-hcp" type="number" min="0" max="54" step="0.1"
-                   placeholder="HCP" aria-label="Course handicap" style="width:5.5rem" />
+            <input id="add-player-hcp" type="number" min="-10" max="54" step="0.1"
+                   placeholder="HCP" style="width:5.5rem"
+                   aria-label="Course handicap — use a minus for a plus handicap" />
           </div>
           <button id="add-player-btn" class="btn-primary w-full">Add player</button>
           <div id="add-player-status" class="text-xs mt-2"></div>
@@ -4373,9 +4478,9 @@ async function viewAdmin(tournamentId) {
         const statusEl = document.getElementById("add-player-status");
         const btn = document.getElementById("add-player-btn");
 
-        if (handicap != null && (!Number.isFinite(handicap) || handicap < 0 || handicap > 54)) {
+        if (handicap != null && (!Number.isFinite(handicap) || handicap < -10 || handicap > 54)) {
           statusEl.className = "text-xs mt-2 status-err";
-          statusEl.textContent = "Handicap must be between 0 and 54, or left blank.";
+          statusEl.textContent = "Handicap must be between -10 (plus 10) and 54, or left blank.";
           return;
         }
 
@@ -4806,6 +4911,28 @@ async function renderTeamStep(tournament) {
 
 // ---------- SCORECARD ----------
 
+// Strokes each player gets per hole on a scoring screen. A match plays off the
+// difference between the sides; stroke play off the full handicap.
+function scoringAllocations(tournament, sides) {
+  if (formatOf(tournament).match) return matchAllocations(tournament, sides);
+  const alloc = new Map();
+  sides.flatMap((s) => s.players).forEach((p) => {
+    alloc.set(p.id, strokeAllocation(tournament, Number(p.handicap) || 0));
+  });
+  return alloc;
+}
+
+// "4 → 3" when a shot lands on this hole, the gross alone when it doesn't.
+// A plus handicap gives one back, so the arrow can point the other way.
+function netHtml(gross, pops) {
+  if (gross === "" || gross == null) return "";
+  if (!pops) return "";
+  const net = gross - pops;
+  return `<span class="netcell" title="${pops > 0 ? `${pops} shot${pops > 1 ? "s" : ""} here` : "gives a shot back here"}">
+            <span class="np-arrow">→</span><span class="np-net">${net}</span>
+          </span>`;
+}
+
 // ---------- ONE SCORER, WHOLE GROUP ----------
 //
 // The normal flow is a phone per side. With single_scorer on, one person
@@ -4843,6 +4970,11 @@ async function viewMatchScore(tournamentId) {
       id: m.id, name: m.player_name, handicap: m.handicap,
       teamId: t.id, teamCode: t.join_code, sideName: t.name,
     })));
+    const allocSides = sides.map((t) => ({
+      players: (t.team_members || []).map((m) => ({ id: m.id, handicap: m.handicap })),
+    }));
+    const alloc = scoringAllocations(tournament, allocSides);
+
     const byMember = {};
     players.forEach((p) => { byMember[p.id] = {}; });
     sides.forEach((t) => (t.scores || []).forEach((sc) => {
@@ -4866,7 +4998,12 @@ async function viewMatchScore(tournamentId) {
               const v = byMember[p.id][h] ?? "";
               return `
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-sm truncate ${v === "" ? "muted-2" : ""}">${escapeHtml(p.name)}</span>
+                  <span class="text-sm truncate ${v === "" ? "muted-2" : ""}">
+                    ${escapeHtml(p.name)}${(alloc.get(p.id)?.[h - 1] ?? 0) ? `<span class="popdot" title="gets a shot here">${
+                      (alloc.get(p.id)[h - 1] > 0 ? "•".repeat(Math.min(3, alloc.get(p.id)[h - 1])) : "+")
+                    }</span>` : ""}
+                  </span>
+                  ${netHtml(v, alloc.get(p.id)?.[h - 1] ?? 0)}
                   ${locked ? `
                     <span class="hole-mark hole-mark-sm ${holeMarkClass(byMember[p.id][h], par[h - 1])}">${v || "—"}</span>
                   ` : `
@@ -5305,7 +5442,10 @@ async function renderMatchBoard(tournament, teams) {
           <div class="idname">${escapeHtml(tournament.name)}</div>
           <div class="idmeta">${metaBits.map(escapeHtml).join(" · ")}</div>
         </div>
-        ${tournament.is_public === false ? `<span class="pill">PRIVATE</span>` : ""}
+        <div class="flex items-center gap-2 shrink-0">
+          ${betLabel(tournament) ? `<span class="pill bet">${escapeHtml(betLabel(tournament))}</span>` : ""}
+          ${tournament.is_public === false ? `<span class="pill">PRIVATE</span>` : ""}
+        </div>
       </div>
       ${shareCode ? `
         <div class="sharecode">
@@ -5344,11 +5484,10 @@ async function renderMatchBoard(tournament, teams) {
           // In singles the side name is the player's name, so repeating it
           // under itself says nothing — show the handicap alone there.
           if (side.players.length === 1) {
-            const h = side.players[0].handicap;
-            return `<div class="ms-hcp">${h == null ? "No handicap set" : h == 0 ? "Scratch" : `Handicap ${h}`}</div>`;
+            return `<div class="ms-hcp">${handicapLabel(side.players[0].handicap) || "No handicap set"}</div>`;
           }
           return `<div class="ms-hcp">${side.players.map((p) =>
-            `${escapeHtml(p.name)}${p.handicap != null ? ` (${p.handicap})` : ""}`).join(" · ")}</div>`;
+            `${escapeHtml(p.name)}${handicapShort(p.handicap)}`).join(" · ")}</div>`;
         })()}
       </div>`;
   };
