@@ -12,7 +12,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%230A130E%22/><path d=%22M38 76 L38 24 L72 33 L38 42%22 fill=%22%232FA84F%22/><rect x=%2233%22 y=%2222%22 width=%227%22 height=%2256%22 rx=%223.5%22 fill=%22%23ffffff%22/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Barlow:ital,wght@0,600;0,700;1,600;1,700;1,800&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
@@ -25,22 +25,25 @@
      direct sunlight on a course.
      ============================================================ */
   :root {
-    /* Dark chrome. Cooled off a green-black that read as muddy; this is a
-       near-neutral slate so the brand green reads as an accent against it
-       rather than a tint of it. */
-    --ink-900: #0B1017;
-    --ink-800: #121924;
-    --ink-700: #1B2532;
-    --ink-600: #2A3646;
+    /* Sampled from the scoreboard this is modelled on: a near-black chrome
+       bar, a navy identity band, and a blue that carries the scores. */
+    --ink-900: #020617;   /* top bar */
+    --navy:    #002147;   /* identity band */
+    --ink-800: #0B2F5A;
+    --ink-700: #143A66;
+    --ink-600: #1E4B7B;
+    --blue:    #1170D3;   /* score chips, primary action */
+    --blue-2:  #0E5CAE;
 
     /* light surfaces + text */
-    --paper:   #F4F5F7;
+    --paper:   #F1F3F5;
     --surface: #FFFFFF;
-    --ink:     #0E141B;
-    --ink-2:   #57616E;
-    --ink-3:   #8B94A0;
-    --line:    #E4E7EB;
-    --line-2:  #CFD4DB;
+    --row-alt: #F8FAFC;
+    --ink:     #1E293B;
+    --ink-2:   #64748B;
+    --ink-3:   #94A3B8;
+    --line:    #E2E8F0;
+    --line-2:  #CBD5E1;
 
     /* brand green, derived from the TeeBoard flag mark */
     --grass-100: #E7F6EB;
@@ -66,8 +69,8 @@
   html { background: var(--ink-900); }
 
   body {
-    font-family: 'Archivo', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 15px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
     line-height: 1.5;
     letter-spacing: -0.005em;
     color: var(--ink);
@@ -177,17 +180,17 @@
 
   .btn-primary {
     display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
-    background: var(--ink-900);
+    background: var(--blue);
     color: #fff;
     border-radius: var(--radius-sm);
     padding: .85rem 1.25rem;
     font-weight: 700;
     font-size: .95rem;
     letter-spacing: -0.01em;
-    border: 1px solid var(--ink-900);
+    border: 1px solid var(--blue);
     transition: background .15s ease, transform .1s ease, opacity .15s ease;
   }
-  .btn-primary:hover { background: var(--ink-700); }
+  .btn-primary:hover { background: var(--blue-2); }
   .btn-primary:active { transform: scale(.985); }
   .btn-primary:disabled { opacity: .35; cursor: not-allowed; transform: none; }
 
@@ -581,33 +584,35 @@
      ============================================================ */
 
   .idband {
-    background: var(--ink-900);
+    background: var(--navy);
     color: #fff;
     padding: 14px 16px 0;
     margin: -16px -16px 0;          /* bleed past the page gutter */
     border-bottom: 1px solid rgba(255,255,255,.07);
   }
-  .idband-top { display: flex; align-items: flex-start; gap: 10px; }
+  /* Crest on the right, the way a team badge sits on the reference board. */
+  .idband-top { display: flex; align-items: flex-start; gap: 10px; flex-direction: row-reverse; }
   .idband-meta { min-width: 0; flex: 1; }
 
   /* Bold italic for names — the one piece of broadcast styling worth
      borrowing. Archivo ships true italics, so this isn't a faux slant. */
   .idname {
+    font-family: 'Barlow', sans-serif;
     font-style: italic;
-    font-weight: 800;
-    font-size: 1.45rem;
-    line-height: 1.1;
-    letter-spacing: -0.02em;
-    margin-top: 2px;
+    font-weight: 700;
+    font-size: 1.4rem;
+    line-height: 1.15;
+    letter-spacing: 0;
+    margin-top: 3px;
   }
   .idsub { font-size: .8rem; color: rgba(255,255,255,.55); margin-top: 3px; }
 
   .idcrest {
-    width: 46px; height: 46px; flex: none;
+    width: 52px; height: 52px; flex: none;
     border-radius: 8px; background: #fff;
     display: flex; align-items: center; justify-content: center;
-    color: var(--ink-900); font-weight: 800; font-size: 1.05rem;
-    font-family: 'Barlow Condensed', sans-serif; letter-spacing: .02em;
+    color: var(--navy); font-weight: 700; font-size: 1.1rem;
+    font-family: 'Barlow', sans-serif; letter-spacing: .01em;
   }
 
   /* Tabs sit on the band's bottom edge, the selected one lifting out of
@@ -621,7 +626,7 @@
     white-space: nowrap;
   }
   .tab:hover { color: rgba(255,255,255,.85); }
-  .tab.is-on { background: var(--paper); color: var(--ink); }
+  .tab.is-on { background: var(--paper); color: var(--ink); font-weight: 700; }
 
   .statstrip {
     display: flex; gap: 22px;
@@ -629,7 +634,7 @@
     margin-top: 11px;
     border-top: 1px solid rgba(255,255,255,.08);
   }
-  .statstrip .v { font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+  .statstrip .v { font-family: 'Barlow', sans-serif; font-weight: 700;
                   font-size: 1.45rem; line-height: 1; font-variant-numeric: tabular-nums; }
   .statstrip .k { font-family: 'Barlow Condensed', sans-serif; text-transform: uppercase;
                   font-size: .68rem; letter-spacing: .1em; color: rgba(255,255,255,.45); margin-top: 3px; }
@@ -638,16 +643,15 @@
      leaderboard scannable; stacked rounded cards are not a leaderboard. */
   .dtable { width: 100%; border-collapse: collapse; background: var(--surface); }
   .dtable thead th {
-    font-family: 'Barlow Condensed', sans-serif;
-    text-transform: uppercase; letter-spacing: .09em;
-    font-size: .7rem; font-weight: 600; color: var(--ink-3);
-    padding: 7px 8px; text-align: right; white-space: nowrap;
-    background: #FAFBFC; border-bottom: 1px solid var(--line-2);
+    text-transform: uppercase; letter-spacing: .04em;
+    font-size: .72rem; font-weight: 500; color: var(--ink-2);
+    padding: 9px 8px; text-align: right; white-space: nowrap;
+    background: var(--row-alt); border-bottom: 1px solid var(--line);
   }
   .dtable thead th:first-child,
   .dtable thead th.l { text-align: left; }
   .dtable td {
-    padding: 9px 8px; font-size: .88rem; text-align: right;
+    padding: 10px 8px; font-size: .84rem; text-align: right;
     border-bottom: 1px solid var(--line); vertical-align: middle;
   }
   .dtable td.l { text-align: left; }
@@ -655,7 +659,7 @@
   .dtable tbody tr.tap:active { background: #F7F9FB; }
   /* Vertical rules only where numbers need separating. */
   .dtable .rule { border-left: 1px solid var(--line); }
-  .dtable .pos { font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+  .dtable .pos { font-family: 'Barlow', sans-serif; font-weight: 700;
                  font-size: .95rem; color: var(--ink-2); width: 2.4rem; }
   .dtable .nm { font-weight: 600; letter-spacing: -.01em; }
   .dtable .sub { font-size: .7rem; color: var(--ink-3); margin-top: 1px; }
@@ -663,15 +667,15 @@
 
   /* Score as a filled chip rather than loose text, so the eye lands on it. */
   .chip {
-    display: inline-block; min-width: 2.5rem;
-    padding: 3px 7px; border-radius: 6px;
-    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
-    font-size: 1rem; line-height: 1.15; text-align: center;
+    display: inline-block; min-width: 2.4rem;
+    padding: 4px 8px; border-radius: 5px;
+    font-family: 'Barlow', sans-serif; font-weight: 700;
+    font-size: .95rem; line-height: 1.15; text-align: center;
     font-variant-numeric: tabular-nums;
-    background: var(--ink-700); color: #fff;
+    background: var(--blue); color: #fff;
   }
   .chip.under { background: var(--under); }
-  .chip.even  { background: var(--ink-600); }
+  .chip.even  { background: var(--blue); }
   .chip.none  { background: transparent; color: var(--ink-3); font-weight: 600; }
   .chip.lead  { background: var(--gold); color: #3A2900; }
 
@@ -737,6 +741,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925e"></script>
+  <script src="app.js?v=20260925f"></script>
 </body>
 </html>
