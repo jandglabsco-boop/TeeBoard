@@ -1162,7 +1162,10 @@ const routes = [
   { re: /^#\/players\/(scramble|individual)$/, view: (m) => viewPlayers(m[1]) },
   { re: /^#\/player\/(.+)$/, view: (m) => viewPlayer(m[1]) },
   { re: /^#\/users$/, view: () => viewUsers() },
-  { re: /^#\/stats$/, view: () => viewStats() },
+  // The range buttons link to #/stats?days=90, and an anchored /stats$/
+  // cannot match that — every one of them fell through the whole table to
+  // viewHome(), which looked like being thrown off the page.
+  { re: /^#\/stats(\?.*)?$/, view: () => viewStats() },
   { re: /^#\/terms$/, view: () => viewLegal("terms") },
   { re: /^#\/privacy$/, view: () => viewLegal("privacy") },
   { re: /^#\/refunds$/, view: () => viewLegal("refunds") },
@@ -3182,8 +3185,8 @@ async function viewStats() {
 
     <div class="grid grid-cols-3 gap-2 mt-4">
       ${[7, 30, 90].map((d) => `
-        <a href="#/stats?days=${d}" class="btn-secondary text-sm ${d === data.days ? "" : ""}"
-           style="${d === data.days ? "border-color:var(--ink);font-weight:700" : ""}">${d} days</a>`).join("")}
+        <a href="#/stats?days=${d}" class="btn-secondary text-sm${d === data.days ? " is-on" : ""}"
+           aria-current="${d === data.days ? "page" : "false"}">${d} days</a>`).join("")}
     </div>
     <a href="#/" class="btn-ghost block text-center mt-4">Back to TeeBoard</a>`;
 }
