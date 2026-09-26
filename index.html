@@ -1284,6 +1284,32 @@
   .btn-secondary.is-on {
     border-color: var(--navy); background: var(--navy); color: #fff; font-weight: 700;
   }
+
+  /* Partners in the footer. */
+  .partnerbar {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    padding: 30px 16px 26px;
+    border-bottom: 1px solid rgba(255,255,255,.07);
+  }
+  .pb-label { font-size: .74rem; color: rgba(255,255,255,.5); letter-spacing: .04em; }
+  .pb-logos {
+    display: flex; align-items: center; justify-content: center;
+    gap: 26px; flex-wrap: wrap;
+  }
+  /* The artwork's black field becomes the footer's own colour. */
+  .pb-logo { height: 46px; width: auto; mix-blend-mode: lighten; }
+  .pb-sep { width: 1px; height: 34px; background: rgba(255,255,255,.14); }
+  @media (max-width: 460px) { .pb-sep { display: none; } }
+
+  .pb-wordmark { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+  .pb-butte {
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.55rem;
+    letter-spacing: .02em; color: #fff; text-transform: uppercase;
+  }
+  .pb-water {
+    font-family: 'Barlow', sans-serif; font-weight: 600; font-size: .72rem;
+    letter-spacing: .22em; color: #4FA8E8; text-transform: uppercase; margin-top: 3px;
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1353,6 +1379,23 @@
   <main id="app" class="mx-auto px-4 pt-4 pb-14" style="max-width:76rem"></main>
 
   <footer style="background: var(--ink-900); color:#fff; margin-top: 40px;">
+    <!-- Partners, above the link columns. The Swing Sense mark is supplied on
+         a black field, so it is blended rather than boxed: lighten leaves its
+         background as the footer's own colour and keeps the artwork intact,
+         with no cut-out to go wrong. -->
+    <div class="partnerbar">
+      <span class="pb-label">In partnership with</span>
+      <div class="pb-logos">
+        <img class="pb-logo" src="img/partners/swing-sense.png"
+             alt="Swing Sense" width="440" height="251" loading="lazy" />
+        <span class="pb-sep" aria-hidden="true"></span>
+        <span class="pb-wordmark">
+          <span class="pb-butte">Butte</span>
+          <span class="pb-water">Water Sports</span>
+        </span>
+      </div>
+    </div>
+
     <div class="mx-auto px-4 py-10 grid gap-8"
          style="max-width:76rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))">
       <div>
@@ -1381,6 +1424,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926v"></script>
+  <script src="app.js?v=20260926w"></script>
 </body>
 </html>
