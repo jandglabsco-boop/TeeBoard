@@ -1422,7 +1422,13 @@ async function viewHome() {
   const latest = candidates.find((t) => tournamentState(t, t.teams) === "live") || candidates[0] || null;
   const latestState = latest ? tournamentState(latest, latest.teams) : null;
   const latestTeams = latest ? (latest.teams || []).length : 0;
-  if (latest) latest.rows = buildLeaderboard(latest, latest.teams || []);
+  // A match is not ranked on a total. Showing one here was why a round played
+  // in +2 appeared as +7: the table was reporting NET strokes, and a plus
+  // handicap adds them back. A match reports holes, so it says so.
+  if (latest) {
+    if (isMatchFormat(latest)) latest.match = buildMatch(latest, latest.teams || []);
+    else latest.rows = buildLeaderboard(latest, latest.teams || []);
+  }
 
   // Only ever what this account actually created. Nothing device-local feeds
   // this list, so signing in on someone else's phone shows you your own
@@ -1478,6 +1484,26 @@ async function viewHome() {
           </div>
 
           <div class="hero-card">
+            ${latest.match ? `
+              ${latest.match.incomplete
+                ? `<p class="text-sm muted text-center py-8">Waiting on the second side.</p>`
+                : `<div class="heromatch">
+                     ${latest.match.sides.map((side, i) => {
+                       const up = i === 0 ? latest.match.up : -latest.match.up;
+                       const standing = up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`;
+                       return `<div class="hm-row${up > 0 ? " ahead" : ""}">
+                                 <span class="hm-name">${escapeHtml(side.players.map((p) => p.name).join(" & ") || side.name)}</span>
+                                 <span class="hm-st">${standing}</span>
+                               </div>`;
+                     }).join("")}
+                     <div class="hm-foot">${latest.match.done
+                       ? (latest.match.up === 0 ? "Match halved" : `Won ${escapeHtml(latest.match.label)}`)
+                       : `${latest.match.played} of ${latest.num_holes} played`}</div>
+                   </div>`}
+              <div style="padding:0 14px 14px">
+                <a href="#/leaderboard/${latest.id}" class="cardbtn" style="margin-top:0">View match</a>
+              </div>
+            ` : `
             <div class="seg">
               <span class="on">${formatOf(latest).ranks === "player" ? "Players" : "Teams"}</span>
               <a href="#/leaderboard/${latest.id}">Full board</a>
@@ -1504,7 +1530,7 @@ async function viewHome() {
               </table>` : `<p class="text-sm muted text-center py-6">No scores yet.</p>`}
             <div style="padding:0 14px 14px">
               <a href="#/leaderboard/${latest.id}" class="cardbtn" style="margin-top:0">View leaderboard</a>
-            </div>
+            </div>`}
           </div>
         </div>
       </section>
@@ -4756,7 +4782,7 @@ function viewJoin(prefillCode) {
       toast("That tournament is closed", true);
       return;
     }
-    renderTeamStep(tournament);
+    renderTeamStep(tournament, code);
   });
 
   if (prefillCode) {
@@ -4764,7 +4790,7 @@ function viewJoin(prefillCode) {
   }
 }
 
-async function renderTeamStep(tournament) {
+async function renderTeamStep(tournament, enteredCode) {
   const savedName = load("bb_player_name", "");
   const body = document.getElementById("join-body");
   body.innerHTML = `
@@ -4813,11 +4839,13 @@ async function renderTeamStep(tournament) {
   const nameSearch = document.getElementById("name-search");
   const nameResults = document.getElementById("name-results");
 
-  const { data: rosterData } = await sb
-    .from("team_members")
-    .select("id, player_name, team_id, teams!inner(id, name, join_code, tournament_id)")
-    .eq("teams.tournament_id", tournament.id);
-  roster = rosterData || [];
+  // Team codes are no longer readable from the table — knowing the tournament
+  // code is what earns them, and this screen is only reached by entering one.
+  const { data: rosterData } = await sb.rpc("player_roster", { p_tournament_code: tournament.join_code || enteredCode });
+  roster = (rosterData || []).map((r) => ({
+    id: r.member_id, player_name: r.player_name, team_id: r.team_id,
+    teams: { id: r.team_id, name: r.team_name, join_code: r.team_code },
+  }));
   loadingEl.classList.add("hidden");
   if (!roster.length) emptyNote.classList.remove("hidden");
 
@@ -4951,11 +4979,61 @@ async function viewMatchScore(tournamentId) {
     ? tournament.par : Array(tournament.num_holes).fill(4);
   const n = tournament.num_holes;
 
+  // Scoring is not a public act. Only the organizer, or somebody holding the
+  // round's code, may open this screen — previously the button was on the
+  // leaderboard and the screen was reachable by anyone who saw it.
+  let code = myTeams()[tournamentId]?.tournamentCode || null;
+  if (!code) {
+    const user = await getUser();
+    if (user && tournament.created_by === user.id) code = tournament.join_code || null;
+  }
+  if (!code) return renderScoreGate();
+
+  function renderScoreGate(message) {
+    app.innerHTML = `
+      <div class="idband"><div class="idband-top"><div class="min-w-0">
+        <div class="idname">${escapeHtml(tournament.name)}</div>
+        <div class="idmeta">${escapeHtml(formatOf(tournament).label)}</div>
+      </div></div></div>
+      <div class="card p-5 mt-3">
+        <h2 class="text-lg mb-1">Enter the code to score</h2>
+        <p class="text-sm muted mb-4">Anyone can follow this match. Entering scores needs the code the organizer shared.</p>
+        <input id="gate-code" placeholder="Join code" autocomplete="off"
+               style="text-transform:uppercase;letter-spacing:.12em" class="mb-3" />
+        <button id="gate-go" class="btn-primary w-full">Start scoring</button>
+        <p id="gate-err" class="text-xs status-err mt-2">${message ? escapeHtml(message) : ""}</p>
+        <a href="#/leaderboard/${tournamentId}" class="block text-center text-sm mt-4"
+           style="color:var(--blue);font-weight:600">Just watching — show me the match</a>
+      </div>`;
+    document.getElementById("gate-go").addEventListener("click", async () => {
+      const entered = document.getElementById("gate-code").value.trim().toUpperCase();
+      if (!entered) return;
+      // The RPC is the check: a wrong code returns nothing, so there is no way
+      // to confirm a guess from the client alone.
+      const { data, error } = await sb.rpc("player_roster", { p_tournament_code: entered });
+      if (error || !data?.length) return renderScoreGate("That code doesn't match this match.");
+      if (!data.some((r) => r.team_id)) return renderScoreGate("That code doesn't match this match.");
+      const { data: found } = await sb.rpc("player_find_tournament", { p_code: entered });
+      const t = Array.isArray(found) ? found[0] : found;
+      if (!t || t.id !== tournamentId) return renderScoreGate("That code is for a different round.");
+      saveMyTeam(tournamentId, { tournamentCode: entered });
+      code = entered;
+      render();
+    });
+  }
+
   async function render() {
+    // Codes come from the code-gated roster, not from the teams table.
+    const { data: rosterRows, error: rosterErr } = await sb.rpc("player_roster", { p_tournament_code: code });
+    if (rosterErr) return renderScoreGate("That code no longer works.");
+
     const { data: teams } = await sb
       .from("teams")
-      .select("id, name, join_code, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
+      .select("id, name, signed_at, team_members(id, player_name, handicap), scores(hole_number, strokes, team_member_id)")
       .eq("tournament_id", tournamentId);
+
+    const codeByTeam = Object.fromEntries((rosterRows || []).map((r) => [r.team_id, r.team_code]));
+    (teams || []).forEach((t) => { t.join_code = codeByTeam[t.id]; });
 
     const sides = (teams || []).slice(0, 2);
     if (sides.length < 2) {
@@ -5290,7 +5368,7 @@ async function viewTeam(teamId) {
             <div class="eyebrow on-dark mb-1">${escapeHtml(tournament.name)} · ${escapeHtml(formatOf(tournament).label)}</div>
             <h1 class="display truncate" style="font-size:1.9rem;color:#fff">${escapeHtml(team.name)}</h1>
           </div>
-          <span class="pill on-dark shrink-0">${escapeHtml(team.join_code)}</span>
+          ${team.join_code ? `<span class="pill on-dark shrink-0">${escapeHtml(team.join_code)}</span>` : ""}
         </div>
 
         <div class="grid grid-cols-3 gap-3 mt-4 pt-4" style="border-top:1px solid rgba(255,255,255,.09)">
@@ -5419,6 +5497,7 @@ async function viewTeam(teamId) {
 async function renderMatchBoard(tournament, teams) {
   const fmt = formatOf(tournament);
   const m = buildMatch(tournament, teams);
+  const par = tournamentPar(tournament);
 
   // The code is shown to the people entitled to it and nobody else:
   //   - the organizer, who owns the match and reads it from the row
@@ -5508,37 +5587,75 @@ async function renderMatchBoard(tournament, teams) {
         : `${m.played} of ${tournament.num_holes} played`}</div>
     </div>
 
-    ${tournament.single_scorer ? `
+    ${tournament.single_scorer && shareCode ? `
       <a href="#/score/${tournament.id}" class="btn-primary w-full mt-3">
         ${m.played ? "Keep scoring" : "Start scoring"}
       </a>` : ""}
 
     ${playedHoles.length ? `
-      <div class="sectionbar mt-5"><span class="t">Hole by hole</span><span class="rule"></span></div>
-      <table class="dtable">
-        <thead>
-          <tr>
-            <th class="l" style="width:3.2rem">Hole</th>
-            <th class="rule">${escapeHtml(nameOf(A))}</th>
-            <th class="rule">${escapeHtml(nameOf(B))}</th>
-            <th class="rule" style="width:6.5rem">Standing</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${playedHoles.map((h) => {
-            const lead = h.standing === 0 ? "A/S"
-              : `${Math.abs(h.standing)} up ${h.standing > 0 ? escapeHtml(nameOf(A)) : escapeHtml(nameOf(B))}`;
-            return `
-              <tr>
-                <td class="l pos">${holeLabel(tournament, h.hole)}</td>
-                <td class="rule num${h.winner === 0 ? " won" : ""}">${h.netA}</td>
-                <td class="rule num${h.winner === 1 ? " won" : ""}">${h.netB}</td>
-                <td class="rule" style="font-size:.78rem;color:var(--ink-2)">${lead}</td>
-              </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-      <p class="text-xs muted-2 mt-2 text-center">Scores shown are net of handicap strokes.</p>
+      <div class="sectionbar mt-5"><span class="t">Scorecard</span><span class="rule"></span></div>
+      ${(() => {
+        // Laid out like every other card in the app: holes across the top, a
+        // row per side, the running match under it. The tall two-column list
+        // this replaces did not look like anything else here.
+        const nums = m.holes.map((h) => h.hole);
+        const cut = tournament.num_holes > 9 ? 9 : nums.length;
+        const blocks = tournament.num_holes > 9 ? [nums.slice(0, 9), nums.slice(9)] : [nums];
+
+        const grid = (block, label) => `
+          <div class="cardwrap">
+            ${label ? `<div class="cw-l">${label}</div>` : ""}
+            <table class="sgrid">
+              <tbody>
+                <tr class="sg-head">
+                  <th class="sg-rl">Hole</th>
+                  ${block.map((h) => `<th>${holeLabel(tournament, h)}</th>`).join("")}
+                  <th class="sg-tot">Tot</th>
+                </tr>
+                <tr class="sg-par">
+                  <th class="sg-rl">Par</th>
+                  ${block.map((h) => `<td>${par[h - 1] ?? "–"}</td>`).join("")}
+                  <td class="sg-tot">${block.reduce((a, h) => a + (par[h - 1] || 0), 0)}</td>
+                </tr>
+                ${[0, 1].map((idx) => `
+                  <tr>
+                    <th class="sg-rl sg-side">${escapeHtml(nameOf(m.sides[idx]))}</th>
+                    ${block.map((h) => {
+                      const row = m.holes.find((x) => x.hole === h);
+                      if (!row || !row.played) return `<td class="sg-e">–</td>`;
+                      const v = idx === 0 ? row.netA : row.netB;
+                      const won = row.winner === idx;
+                      return `<td class="${won ? "sg-won" : ""}">${v}</td>`;
+                    }).join("")}
+                    <td class="sg-tot">${(() => {
+                      // Net total for the holes actually played in this block.
+                      const t = block.reduce((a, h) => {
+                        const r = m.holes.find((x) => x.hole === h);
+                        if (!r || !r.played) return a;
+                        return a + (idx === 0 ? r.netA : r.netB);
+                      }, 0);
+                      return t || "–";
+                    })()}</td>
+                  </tr>`).join("")}
+                <tr class="sg-run">
+                  <th class="sg-rl">Match</th>
+                  ${block.map((h) => {
+                    const row = m.holes.find((x) => x.hole === h);
+                    if (!row || !row.played) return `<td>–</td>`;
+                    const st = row.standing;
+                    return `<td>${st === 0 ? "A/S" : `${Math.abs(st)}${st > 0 ? "↑" : "↓"}`}</td>`;
+                  }).join("")}
+                  <td class="sg-tot">${m.label}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>`;
+
+        return blocks.map((b, i) => grid(b, blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null)).join("");
+      })()}
+      <p class="text-xs muted-2 mt-2 text-center">
+        Net of handicap strokes. ↑ means ${escapeHtml(nameOf(A))} is up, ↓ means ${escapeHtml(nameOf(B))} is.
+      </p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}
   `;
 

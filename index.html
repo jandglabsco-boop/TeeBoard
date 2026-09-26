@@ -1061,6 +1061,58 @@
   .np-net { font-weight: 700; color: var(--under); font-variant-numeric: tabular-nums; }
 
   .pill.bet { background: rgba(255,255,255,.14); border-color: transparent; color: #fff; }
+
+  /* Match scorecard: same shape as the round scorecards elsewhere. */
+  .cardwrap { margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .cw-l {
+    font-family: 'Barlow', sans-serif; font-size: .7rem; font-weight: 700;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px;
+  }
+  .sgrid {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    font-variant-numeric: tabular-nums; min-width: 460px;
+    background: var(--surface); border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  .sgrid th, .sgrid td {
+    text-align: center; padding: 7px 4px; font-size: .82rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .sgrid tr:last-child th, .sgrid tr:last-child td { border-bottom: 0; }
+  .sgrid .sg-rl {
+    text-align: left; padding-left: 10px; white-space: nowrap;
+    font-size: .74rem; font-weight: 600; color: var(--ink-2);
+    position: sticky; left: 0; background: var(--surface); z-index: 1;
+    max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sgrid .sg-head th {
+    background: var(--navy); color: #fff; font-weight: 700; font-size: .74rem;
+  }
+  .sgrid .sg-head .sg-rl { background: var(--navy); color: rgba(255,255,255,.75); }
+  .sgrid .sg-par td, .sgrid .sg-par th { background: var(--surface-2); color: var(--ink-2); font-size: .76rem; }
+  .sgrid .sg-par .sg-rl { background: var(--surface-2); }
+  .sgrid .sg-side { font-weight: 700; color: var(--ink); }
+  .sgrid .sg-won { color: var(--under); font-weight: 700; }
+  .sgrid .sg-e { color: var(--ink-3); }
+  .sgrid .sg-tot { font-weight: 700; background: var(--surface-2); }
+  .sgrid .sg-run td, .sgrid .sg-run th {
+    font-size: .74rem; color: var(--ink-2); background: var(--surface-2);
+  }
+
+  /* Match standing inside the home hero card. */
+  .heromatch { padding: 14px 14px 4px; }
+  .hm-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border-radius: 9px; margin-bottom: 7px; background: var(--surface-2);
+  }
+  .hm-row.ahead { background: var(--blue-lo); }
+  .hm-name { font-weight: 600; font-size: .9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hm-st {
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1rem;
+    flex: none; font-variant-numeric: tabular-nums;
+  }
+  .hm-row.ahead .hm-st { color: var(--under); }
+  .hm-foot { text-align: center; font-size: .76rem; color: var(--ink-2); padding: 4px 0 10px; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1153,6 +1205,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260925z"></script>
+  <script src="app.js?v=20260926d"></script>
 </body>
 </html>
