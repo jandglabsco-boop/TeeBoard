@@ -1464,6 +1464,16 @@ async function viewHome() {
     else latest.rows = buildLeaderboard(latest, latest.teams || []);
   }
 
+  // Matches from the past week, other than whichever one is in the hero. A
+  // group that plays several in a week had them all collapse to one.
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const weekMatches = candidates
+    .filter((t) => isMatchFormat(t)
+      && (!latest || t.id !== latest.id)
+      && Date.now() - new Date(t.created_at).getTime() < WEEK_MS)
+    .map((t) => { t.match = buildMatch(t, t.teams || []); return t; })
+    .filter((t) => !t.match.incomplete);
+
   // Only ever what this account actually created. Nothing device-local feeds
   // this list, so signing in on someone else's phone shows you your own
   // tournaments and nothing of theirs.
@@ -1570,6 +1580,40 @@ async function viewHome() {
           </div>
         </div>
       </section>
+    ` : ""}
+
+    ${weekMatches.length ? `
+      <div class="sectionbar" style="margin-top:26px">
+        <span class="t">This week's matches</span><span class="rule"></span>
+        <span class="n">${weekMatches.length}</span>
+      </div>
+      <div class="weekgrid">
+        ${weekMatches.map((t) => {
+          const mm = t.match;
+          const state = tournamentState(t, t.teams);
+          return `
+            <a href="#/leaderboard/${t.id}" class="weekcard">
+              <div class="wk-top">
+                <span class="pill ${state === "live" ? "onair" : ""}">${state === "live" ? "PLAYING" : "FINAL"}</span>
+                <span class="wk-fmt">${escapeHtml(formatOf(t).label)}</span>
+              </div>
+              ${mm.sides.map((side, i) => {
+                const up = i === 0 ? mm.up : -mm.up;
+                const won = mm.done && up > 0;
+                return `
+                  <div class="wk-side${up > 0 ? " ahead" : up < 0 ? " behind" : ""}">
+                    <span class="wk-name">${escapeHtml(side.players.map((pl) => pl.name).join(" & ") || side.name)}</span>
+                    <span class="wk-st">${up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`}${
+                      won ? `<span class="wintag">Won</span>` : ""}</span>
+                  </div>`;
+              }).join("")}
+              <div class="wk-foot">${mm.done
+                ? (mm.up === 0 ? "Halved" : `Won ${escapeHtml(mm.label)}`)
+                : `${mm.played} of ${t.num_holes} played`} · ${escapeHtml(
+                  new Date(t.created_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))}</div>
+            </a>`;
+        }).join("")}
+      </div>
     ` : ""}
 
     <div id="news-slot"></div>
@@ -5811,7 +5855,24 @@ async function renderMatchBoard(tournament, teams) {
         const cut = tournament.num_holes > 9 ? 9 : nums.length;
         const blocks = tournament.num_holes > 9 ? [nums.slice(0, 9), nums.slice(9)] : [nums];
 
-        const grid = (block, label) => `
+        // Totals for any set of holes, for a side or for par.
+        const sumFor = (holesList, idx) => {
+          let gross = 0, net = 0, any = false;
+          holesList.forEach((h) => {
+            const r = m.holes.find((x) => x.hole === h);
+            if (!r || !r.played) return;
+            any = true;
+            gross += idx === 0 ? r.grossA : r.grossB;
+            net += idx === 0 ? r.netA : r.netB;
+          });
+          return { gross, net, any };
+        };
+        const cell = (t) => (!t.any ? "–"
+          : `<span class="sg-g">${t.gross}</span>${t.gross !== t.net ? `<span class="sg-n">${t.net}</span>` : ""}`);
+        const parSum = (holesList) => holesList.reduce((a, h) => a + (par[h - 1] || 0), 0);
+
+        // "Out", "In", then the round — the columns a paper card carries.
+        const grid = (block, label, blockLabel, withRound) => `
           <div class="cardwrap">
             ${label ? `<div class="cw-l">${label}</div>` : ""}
             <table class="sgrid">
@@ -5819,12 +5880,14 @@ async function renderMatchBoard(tournament, teams) {
                 <tr class="sg-head">
                   <th class="sg-rl">Hole</th>
                   ${block.map((h) => `<th>${holeLabel(tournament, h)}</th>`).join("")}
-                  <th class="sg-tot">Tot</th>
+                  <th class="sg-tot">${blockLabel}</th>
+                  ${withRound ? `<th class="sg-tot sg-round">Tot</th>` : ""}
                 </tr>
                 <tr class="sg-par">
                   <th class="sg-rl">Par</th>
                   ${block.map((h) => `<td>${par[h - 1] ?? "–"}</td>`).join("")}
-                  <td class="sg-tot">${block.reduce((a, h) => a + (par[h - 1] || 0), 0)}</td>
+                  <td class="sg-tot">${parSum(block)}</td>
+                  ${withRound ? `<td class="sg-tot sg-round">${parSum(nums)}</td>` : ""}
                 </tr>
                 ${[0, 1].map((idx) => `
                   <tr>
@@ -5843,18 +5906,8 @@ async function renderMatchBoard(tournament, teams) {
                                 ${gross !== v ? `<span class="sg-n">${v}</span>` : ""}
                               </td>`;
                     }).join("")}
-                    <td class="sg-tot">${(() => {
-                      let g = 0, nt = 0, any = false;
-                      block.forEach((h) => {
-                        const r = m.holes.find((x) => x.hole === h);
-                        if (!r || !r.played) return;
-                        any = true;
-                        g += idx === 0 ? r.grossA : r.grossB;
-                        nt += idx === 0 ? r.netA : r.netB;
-                      });
-                      if (!any) return "–";
-                      return `<span class="sg-g">${g}</span>${g !== nt ? `<span class="sg-n">${nt}</span>` : ""}`;
-                    })()}</td>
+                    <td class="sg-tot">${cell(sumFor(block, idx))}</td>
+                    ${withRound ? `<td class="sg-tot sg-round">${cell(sumFor(nums, idx))}</td>` : ""}
                   </tr>`).join("")}
                 <tr class="sg-run">
                   <th class="sg-rl">Match</th>
@@ -5871,12 +5924,18 @@ async function renderMatchBoard(tournament, teams) {
                     return `<td><span class="sg-up">${Math.abs(st)}${st > 0 ? "↑" : "↓"}</span><span class="sg-who">${escapeHtml(who)}</span></td>`;
                   }).join("")}
                   <td class="sg-tot">${m.label}</td>
+                  ${withRound ? `<td class="sg-tot sg-round">${m.label}</td>` : ""}
                 </tr>
               </tbody>
             </table>
           </div>`;
 
-        const nines = blocks.map((b, i) => grid(b, blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null)).join("");
+        const nines = blocks.map((b, i) => grid(
+          b,
+          blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null,
+          blocks.length > 1 ? (i === 0 ? "Out" : "In") : "Tot",
+          blocks.length > 1 && i === blocks.length - 1,     // the round total sits on the last block
+        )).join("");
 
         // The round total. The per-nine columns never added up to one, so the
         // question "what did I shoot?" had no answer on this card.

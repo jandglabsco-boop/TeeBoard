@@ -1171,6 +1171,47 @@
     font-size: .6rem; letter-spacing: .09em; text-transform: uppercase;
     padding: 3px 7px; border-radius: 5px;
   }
+
+  /* The round column, set apart from the nine it follows. */
+  .sgrid .sg-round { background: var(--navy); color: #fff; }
+  .sgrid .sg-round .sg-n { color: #9BD0A5; }
+  .sgrid .sg-head .sg-round { background: #000; }
+
+  /* Matches played this week, beneath the featured one. */
+  .weekgrid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 640px)  { .weekgrid { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 1024px) { .weekgrid { grid-template-columns: repeat(3, 1fr); } }
+
+  .weekcard {
+    display: block; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; padding: 13px 14px; color: var(--ink);
+    transition: border-color .15s ease, transform .1s ease;
+  }
+  .weekcard:hover { border-color: var(--line-2); }
+  .weekcard:active { transform: scale(.995); }
+  .wk-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .wk-fmt {
+    font-family: 'Barlow', sans-serif; font-size: .68rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .wk-side {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px; border-radius: 8px; margin-bottom: 5px; background: var(--surface-2);
+  }
+  .wk-side.ahead  { background: #EAF2FB; }
+  .wk-side.behind { background: #FDEEEE; }
+  .wk-name {
+    font-weight: 600; font-size: .85rem; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wk-st {
+    flex: none; font-family: 'Barlow', sans-serif; font-weight: 700; font-size: .85rem;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .wk-side.ahead  .wk-st { color: #1668C4; }
+  .wk-side.behind .wk-st { color: var(--under); }
+  .wk-foot { font-size: .72rem; color: var(--ink-2); margin-top: 8px; }
+  .weekcard .wintag { font-size: .55rem; padding: 2px 5px; margin-left: 0; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1268,6 +1309,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926k"></script>
+  <script src="app.js?v=20260926m"></script>
 </body>
 </html>
