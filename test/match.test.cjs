@@ -205,4 +205,28 @@ const si9 = [1,2,3,4,5,6,7,8,9];
   check('  but both are credited a round', byName['P1'].byMode.individual.rounds, 1);
 }
 
+// ---- a scramble birdie is not an individual birdie ----
+// Both tabs were showing the career total, so a team's birdies were credited
+// to the player's own-ball record.
+{
+  const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
+  const scramble = {
+    ...T9, format: 'scramble', created_at: '2026-09-25T00:00:00Z',
+    teams: [
+      { id:'t1', name:'Team A', signed_at:null,
+        team_members:[{id:'m1',player_name:'Player One',handicap:0},{id:'m2',player_name:'Player Two',handicap:0}],
+        scores: [1,2,3].map(h => ({hole_number:h, strokes:3, team_member_id:null}))   // 3 team birdies
+          .concat([4,5,6,7,8,9].map(h => ({hole_number:h, strokes:4, team_member_id:null}))) },
+      { id:'t2', name:'Team B', signed_at:null,
+        team_members:[{id:'m3',player_name:'Player Three',handicap:0}],
+        scores: [...Array(9)].map((_,i) => ({hole_number:i+1, strokes:5, team_member_id:null})) },
+    ],
+  };
+  const stats = sandbox.buildCareerStats([scramble], '2026-09-24');
+  const p1 = stats.find(p => p.name === 'Player One');
+  check('scramble birdies land in the scramble record', p1.byMode.scramble.birdies, 3);
+  check('  and not in the individual record', p1.byMode.individual.birdies, 0);
+  check('  career total still counts them', p1.birdies, 3);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);

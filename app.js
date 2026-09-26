@@ -389,6 +389,14 @@ function tournamentState(tournament, teams) {
   if (!tournament) return "never_started";
   if (tournament.status !== "active") return "completed";
 
+  // A match ends when it can no longer be caught, not when the organizer
+  // closes it. One that was won 6 & 5 was still reading PLAYING NOW because
+  // nothing had told this function the match was decided.
+  if (isMatchFormat(tournament)) {
+    const m = buildMatch(tournament, teams || []);
+    if (!m.incomplete && m.done) return "completed";
+  }
+
   const played = (teams || []).filter((t) => (t.scores || []).length > 0);
   if (!played.length) {
     const age = Date.now() - new Date(tournament.created_at).getTime();
@@ -467,6 +475,17 @@ function handicapShort(h) {
   if (!Number.isFinite(v)) return "";
   const n = Number.isInteger(v) ? v : Number(v.toFixed(1));
   return n < 0 ? ` (+${Math.abs(n)})` : ` (${n})`;
+}
+
+// A short tag for a side — "GH", or "G&B" for a pair — so a standing can name
+// who it belongs to instead of relying on the reader remembering an arrow.
+function sideTag(side) {
+  const names = side.players.length ? side.players.map((p) => p.name) : [side.name];
+  if (names.length === 1) {
+    const parts = String(names[0]).trim().split(/\s+/).filter(Boolean);
+    return parts.slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("");
+  }
+  return names.map((n) => String(n).trim().charAt(0).toUpperCase()).join("&");
 }
 
 // ---------- MATCH PLAY ----------
@@ -1506,8 +1525,10 @@ async function viewHome() {
                      ${latest.match.sides.map((side, i) => {
                        const up = i === 0 ? latest.match.up : -latest.match.up;
                        const standing = up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`;
-                       return `<div class="hm-row${up > 0 ? " ahead" : ""}">
-                                 <span class="hm-name">${escapeHtml(side.players.map((p) => p.name).join(" & ") || side.name)}</span>
+                       const won = latest.match.done && up > 0;
+                       return `<div class="hm-row${up > 0 ? " ahead" : up < 0 ? " behind" : ""}">
+                                 <span class="hm-name">${escapeHtml(side.players.map((p) => p.name).join(" & ") || side.name)}${
+                                   won ? `<span class="wintag">Winner</span>` : ""}</span>
                                  <span class="hm-st">${standing}</span>
                                </div>`;
                      }).join("")}
@@ -2009,7 +2030,13 @@ function pointsForPlace(place) {
 }
 
 function emptyModeStats() {
-  return { rounds: 0, points: 0, wins: 0, podiums: 0, bestFinish: null, finishes: [] };
+  return {
+    rounds: 0, points: 0, wins: 0, podiums: 0, bestFinish: null, finishes: [],
+    // Hole record kept per competition too. A birdie made by a scramble team
+    // is not a birdie the individual made with their own ball, and showing
+    // the career total on the Individual tab credited them as if it were.
+    eagles: 0, birdies: 0, pars: 0, bogeys: 0, doubles: 0, holesPlayed: 0,
+  };
 }
 
 function emptyPlayerStats(name) {
@@ -2091,6 +2118,50 @@ function buildCareerStats(tournaments, since = SEASON_START) {
           if (mm.bestFinish == null || place < mm.bestFinish) mm.bestFinish = place;
           if (!halved && place === 1) mm.wins += 1;
           if (place <= 3) mm.podiums += 1;
+
+          // Holes, where the player actually holed their own ball. Foursomes
+          // is one ball between two, so there is no individual record to keep.
+          const mine = side.players.find((pl) => pl.name === rawName);
+          const mpar = tournamentPar(t);
+          let gross = 0, parPlayed = 0, thru = 0;
+          if (mine && mine.scoreMap) {
+            for (let h = 1; h <= t.num_holes; h++) {
+              const strokes = mine.scoreMap[h];
+              if (strokes == null) continue;
+              st.holesPlayed += 1;
+              mm.holesPlayed += 1;
+              gross += strokes;
+              parPlayed += mpar[h - 1] ?? 4;
+              thru += 1;
+              switch (holeMarkClass(strokes, mpar[h - 1] ?? 4)) {
+                case "eagle":        st.eagles += 1;  mm.eagles += 1;  break;
+                case "birdie":       st.birdies += 1; mm.birdies += 1; break;
+                case "bogey":        st.bogeys += 1;  mm.bogeys += 1;  break;
+                case "double-bogey": st.doubles += 1; mm.doubles += 1; break;
+                default:             st.pars += 1;    mm.pars += 1;    break;
+              }
+            }
+          }
+
+          // The round belongs in the player's history like any other, or it
+          // simply is not there — which is how a match played today left no
+          // trace on the profile of the person who played it.
+          st.history.push({
+            tournamentId: t.id,
+            teamId: side.id,
+            name: t.name,
+            date: t.created_at,
+            format: formatOf(t).label,
+            mode,
+            place,
+            tied: halved,
+            contested: true,
+            toPar: gross - parPlayed,
+            thru,
+            numHoles: t.num_holes,
+            points,
+            matchResult: halved ? "Halved" : (place === 1 ? `Won ${m.label}` : `Lost ${m.label}`),
+          });
         });
       });
       return;
@@ -2149,12 +2220,13 @@ function buildCareerStats(tournaments, since = SEASON_START) {
           const strokes = row.scoreMap[h];
           if (strokes == null) continue;
           s.holesPlayed += 1;
+          m.holesPlayed += 1;
           switch (holeMarkClass(strokes, par[h - 1] ?? 4)) {
-            case "eagle": s.eagles += 1; break;
-            case "birdie": s.birdies += 1; break;
-            case "bogey": s.bogeys += 1; break;
-            case "double-bogey": s.doubles += 1; break;
-            default: s.pars += 1; break;
+            case "eagle":        s.eagles += 1;  m.eagles += 1;  break;
+            case "birdie":       s.birdies += 1; m.birdies += 1; break;
+            case "bogey":        s.bogeys += 1;  m.bogeys += 1;  break;
+            case "double-bogey": s.doubles += 1; m.doubles += 1; break;
+            default:             s.pars += 1;    m.pars += 1;    break;
           }
         }
 
@@ -2643,7 +2715,8 @@ async function viewPlayers(modeRaw) {
                 <td class="l" style="max-width:0">
                   <div class="nm truncate">${escapeHtml(p.name)}</div>
                   <div class="sub truncate">
-                    ${p.birdies} birdie${p.birdies === 1 ? "" : "s"}${p.eagles ? ` · ${p.eagles} eagle${p.eagles === 1 ? "" : "s"}` : ""}
+                    ${p.m.birdies} birdie${p.m.birdies === 1 ? "" : "s"}${p.m.eagles ? ` · ${p.m.eagles} eagle${p.m.eagles === 1 ? "" : "s"}` : ""}${
+                      mode === "individual" ? "" : " (team)"}
                   </div>
                 </td>
                 <td class="rule"><span class="chip">${Math.round(p.m.points)}</span></td>
@@ -2794,7 +2867,7 @@ async function viewPlayer(keyRaw) {
               <td class="l" style="max-width:0">
                 <div class="nm truncate">${escapeHtml(h.name)}</div>
                 <div class="sub truncate">
-                  ${escapeHtml(h.format)} · ${new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}${h.contested ? "" : " · unopposed"}
+                  ${escapeHtml(h.format)} · ${new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}${h.contested ? "" : " · unopposed"}${h.matchResult ? ` · ${escapeHtml(h.matchResult)}` : ""}
                 </div>
               </td>
               <td class="rule" style="width:4rem">
@@ -5689,9 +5762,11 @@ async function renderMatchBoard(tournament, teams) {
 
   const sideCard = (side, idx) => {
     const ahead = (idx === 0 && m.up > 0) || (idx === 1 && m.up < 0);
+    const behind = m.up !== 0 && !ahead;
+    const won = m.done && ahead;
     return `
-      <div class="matchside${ahead ? " ahead" : ""}">
-        <div class="ms-name">${escapeHtml(nameOf(side))}</div>
+      <div class="matchside${ahead ? " ahead" : behind ? " behind" : ""}">
+        <div class="ms-name">${escapeHtml(nameOf(side))}${won ? `<span class="wintag">Winner</span>` : ""}</div>
         ${(() => {
           if (!side.players.length) return "";
           // In singles the side name is the player's name, so repeating it
@@ -5788,7 +5863,12 @@ async function renderMatchBoard(tournament, teams) {
                     if (!row || !row.played) return `<td>–</td>`;
                     if (row.dead) return `<td class="sg-dead">—</td>`;
                     const st = row.standing;
-                    return `<td>${st === 0 ? "A/S" : `${Math.abs(st)}${st > 0 ? "↑" : "↓"}`}</td>`;
+                    if (st === 0) return `<td>A/S</td>`;
+                    // Name the side that is up. An arrow alone made the reader
+                    // hold "up means the top row" in their head all the way
+                    // down the card.
+                    const who = st > 0 ? sideTag(m.sides[0]) : sideTag(m.sides[1]);
+                    return `<td><span class="sg-up">${Math.abs(st)}${st > 0 ? "↑" : "↓"}</span><span class="sg-who">${escapeHtml(who)}</span></td>`;
                   }).join("")}
                   <td class="sg-tot">${m.label}</td>
                 </tr>
@@ -5796,11 +5876,52 @@ async function renderMatchBoard(tournament, teams) {
             </table>
           </div>`;
 
-        return blocks.map((b, i) => grid(b, blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null)).join("");
+        const nines = blocks.map((b, i) => grid(b, blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null)).join("");
+
+        // The round total. The per-nine columns never added up to one, so the
+        // question "what did I shoot?" had no answer on this card.
+        const totals = [0, 1].map((idx) => {
+          let gross = 0, net = 0, holesIn = 0;
+          m.holes.forEach((r) => {
+            if (!r.played) return;
+            holesIn++;
+            gross += idx === 0 ? r.grossA : r.grossB;
+            net += idx === 0 ? r.netA : r.netB;
+          });
+          return { side: m.sides[idx], gross, net, holesIn };
+        });
+        const parPlayed = m.holes.reduce((a, r) => a + (r.played ? (par[r.hole - 1] || 0) : 0), 0);
+        const rel = (v) => (v - parPlayed === 0 ? "E" : v - parPlayed > 0 ? `+${v - parPlayed}` : `${v - parPlayed}`);
+
+        return nines + `
+          <div class="sectionbar mt-4"><span class="t">Round total</span><span class="rule"></span></div>
+          <table class="dtable">
+            <thead>
+              <tr>
+                <th class="l">Player</th>
+                <th class="rule" style="width:4.4rem">Gross</th>
+                <th class="rule" style="width:4.4rem">Net</th>
+                <th class="rule" style="width:4rem">To par</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${totals.map((t) => `
+                <tr>
+                  <td class="l"><div class="nm">${escapeHtml(nameOf(t.side))}</div></td>
+                  <td class="rule num">${t.gross || "–"}</td>
+                  <td class="rule num">${t.gross === t.net ? "–" : t.net}</td>
+                  <td class="rule"><span class="chip ${t.gross - parPlayed < 0 ? "under" : "even"}">${t.gross ? rel(t.gross) : "–"}</span></td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+          <p class="text-xs muted-2 mt-2 text-center">
+            Every hole played, including any after the match was won.
+            To par is on the gross score${totals[0].holesIn < tournament.num_holes
+              ? ` over the ${totals[0].holesIn} holes scored so far` : ""}.
+          </p>`;
       })()}
       <p class="text-xs muted-2 mt-2 text-center">
-        Circled is a birdie, squared a bogey. The small number is what the score counts as after shots.
-        ↑ means ${escapeHtml(nameOf(A))} is up, ↓ means ${escapeHtml(nameOf(B))} is.
+        Circled is a birdie, squared a bogey. The small red number is what the score counts as after shots.
         ${m.closedOnHole ? `Holes after ${holeLabel(tournament, m.closedOnHole)} are shown but didn't count — the match was already won.` : ""}
       </p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}
