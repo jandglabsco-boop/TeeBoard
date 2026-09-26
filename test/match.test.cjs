@@ -10,10 +10,15 @@ const fns = ['FORMATS','formatOf','strokeAllocation','buildMatch','matchResultLa
 // evaluate the file in a sandbox that tolerates missing DOM
 const vm = require('vm');
 const sandbox = { window: global.window, document: global.document, location: global.location,
-                  navigator: global.navigator, console, setTimeout, fetch: () => Promise.reject(),
+                  navigator: global.navigator, console, setTimeout, setInterval: () => 0,
+                  clearInterval: () => {}, clearTimeout: () => {},
+                  fetch: () => Promise.reject(new Error('no network in tests')),
                   localStorage: {getItem:()=>null,setItem(){},removeItem(){}} };
 vm.createContext(sandbox);
-try { vm.runInContext(src, sandbox); } catch (e) { /* DOM bits may throw; functions are still defined */ }
+// The whole file must evaluate. Swallowing a throw here leaves every const
+// after it uninitialised, and the failure surfaces later as a confusing
+// "cannot access X before initialization" from inside a function under test.
+vm.runInContext(src, sandbox);
 
 const T = (holes, si) => ({ num_holes: holes, handicap: si, par: Array(holes).fill(4) });
 const side = (id, name, players, signed) => ({ id, name, team_members: players.map(p=>({id:p.id,player_name:p.name,handicap:p.hc})),
@@ -154,6 +159,50 @@ const si9 = [1,2,3,4,5,6,7,8,9];
   const alloc = sandbox.strokeAllocation(T18, 9);
   check('a 9 handicap still gets 9 shots', alloc.reduce((a,b)=>a+b,0), 9);
   check('  one each on the nine hardest', alloc.slice(0,9).every(v=>v===1) && alloc.slice(9).every(v=>v===0), true);
+}
+
+// ---- the match winner is the one credited ----
+// A match was being ranked through the stroke leaderboard, whose sort does
+// not understand metric "match", so the order was arbitrary — the player who
+// lost 6 & 5 was shown with the win.
+{
+  const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
+  const side = (id,name,players) => ({ id, name,
+    team_members: players.map(p=>({id:p.id,player_name:p.name,handicap:p.hc})),
+    scores: players.flatMap(p => Object.entries(p.s||{}).map(([h,v]) => ({hole_number:+h, strokes:v, team_member_id:p.id}))),
+    signed_at: null });
+
+  // B wins the first five holes outright: 5 & 4.
+  const a = {id:'a',name:'Loser',hc:0,s:{1:5,2:5,3:5,4:5,5:5}};
+  const b = {id:'b',name:'Winner',hc:0,s:{1:4,2:4,3:4,4:4,5:4}};
+  const t = {...T9, format:'match_singles', created_at:'2026-09-25T00:00:00Z',
+             teams:[side('A','Loser',[a]), side('B','Winner',[b])]};
+
+  const m = sandbox.buildMatch(t, t.teams);
+  check('the match itself says who won', m.leader.name, 'Winner');
+
+  const stats = sandbox.buildCareerStats([t], '2026-09-24');
+  const byName = Object.fromEntries(stats.map(p => [p.name, p]));
+  check('the winner is credited the win', byName['Winner'].byMode.individual.wins, 1);
+  check('the loser is credited none', byName['Loser'].byMode.individual.wins, 0);
+  check('  and the winner outranks on points', byName['Winner'].byMode.individual.points > byName['Loser'].byMode.individual.points, true);
+}
+
+// A halved match is a first each, and a win for neither.
+{
+  const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
+  const side = (id,name,players) => ({ id, name,
+    team_members: players.map(p=>({id:p.id,player_name:p.name,handicap:p.hc})),
+    scores: players.flatMap(p => Object.entries(p.s||{}).map(([h,v]) => ({hole_number:+h, strokes:v, team_member_id:p.id}))),
+    signed_at: null });
+  const all4 = Object.fromEntries([...Array(9)].map((_,i)=>[i+1,4]));
+  const t = {...T9, format:'match_singles', created_at:'2026-09-25T00:00:00Z',
+             teams:[side('A','P1',[{id:'a',name:'P1',hc:0,s:all4}]),
+                    side('B','P2',[{id:'b',name:'P2',hc:0,s:all4}])]};
+  const stats = sandbox.buildCareerStats([t], '2026-09-24');
+  const byName = Object.fromEntries(stats.map(p => [p.name, p]));
+  check('a halved match is a win for neither', byName['P1'].byMode.individual.wins + byName['P2'].byMode.individual.wins, 0);
+  check('  but both are credited a round', byName['P1'].byMode.individual.rounds, 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

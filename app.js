@@ -1130,6 +1130,7 @@ const routes = [
   // Same screen, opened on a match format. A match is a round with two
   // sides, so it shares the whole create flow rather than forking it.
   { re: /^#\/match$/, view: () => viewCreate({ match: true }) },
+  { re: /^#\/mine$/, view: viewMine },
   // Wrapped so the regex match array isn't passed in as prefillCode — bare
   // `view: viewJoin` handed it the match ("#/join"), which pre-filled the code
   // box with that string and auto-fired a doomed lookup on arrival.
@@ -2051,6 +2052,50 @@ function buildCareerStats(tournaments, since = SEASON_START) {
   (tournaments || []).forEach((t) => {
     if (new Date(t.created_at).getTime() < cutoff) return;   // before the season
     const teams = t.teams || [];
+
+    // A match is won by winning holes, not by posting a total. Running one
+    // through the stroke leaderboard sorted it on a metric that sort does not
+    // understand, so the order was arbitrary — it credited the win to the
+    // player who lost 6 & 5. Decide it from the match itself.
+    if (formatOf(t).match) {
+      const m = buildMatch(t, teams);
+      if (m.incomplete || !m.played) return;
+
+      const halved = m.up === 0;
+      const winnerId = halved ? null : m.leader.id;
+      m.sides.forEach((side) => {
+        const place = halved || side.id === winnerId ? 1 : 2;
+        // A halved match is two firsts, so the two places are shared.
+        const points = halved
+          ? (pointsForPlace(1) + pointsForPlace(2)) / 2
+          : pointsForPlace(place);
+
+        const names = side.players.length ? side.players.map((p) => p.name) : [side.name];
+        names.forEach((rawName) => {
+          const st = statsFor(rawName);
+          if (!st) return;
+          const mode = side.players.length > 1 ? "scramble" : "individual";
+          const mm = st.byMode[mode];
+
+          st.rounds += 1;
+          st.points += points;
+          st.finishes.push(place);
+          if (st.bestFinish == null || place < st.bestFinish) st.bestFinish = place;
+          // Only an outright winner has won something.
+          if (!halved && place === 1) st.wins += 1;
+          if (place <= 3) st.podiums += 1;
+
+          mm.rounds += 1;
+          mm.points += points;
+          mm.finishes.push(place);
+          if (mm.bestFinish == null || place < mm.bestFinish) mm.bestFinish = place;
+          if (!halved && place === 1) mm.wins += 1;
+          if (place <= 3) mm.podiums += 1;
+        });
+      });
+      return;
+    }
+
     const rows = buildLeaderboard(t, teams);
     const started = rows.filter((r) => r.thru > 0);
     if (!started.length) return;                 // nothing was ever scored
@@ -2458,6 +2503,81 @@ async function viewTournaments(tab) {
   }
   if (q) q.addEventListener("input", applyFilters);
   if (fmtSel) fmtSel.addEventListener("change", applyFilters);
+}
+
+// ---------- WHAT I RUN ----------
+//
+// Everything this account created, with the codes and a way in to manage it.
+// Derived from created_by alone — nothing device-local feeds it, so signing in
+// on someone else's phone shows your rounds and not theirs.
+
+async function viewMine() {
+  app.innerHTML = loadingHtml();
+  const user = await getUser();
+  if (!user) return renderAuthGate();
+
+  const { data, error } = await sb
+    .from("tournaments")
+    .select("id, name, join_code, format, num_holes, status, created_at, course_name, is_public")
+    .eq("created_by", user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    app.innerHTML = `<div class="card p-6 mt-4 text-center">
+      <h2 class="text-lg mb-2">Couldn't load your rounds</h2>
+      <p class="text-sm muted">${escapeHtml(error.message)}</p></div>`;
+    return;
+  }
+
+  const all = data || [];
+  const matches = all.filter((t) => isTwoSidedFormat(t));
+  const tournaments = all.filter((t) => !isTwoSidedFormat(t));
+
+  const row = (t) => `
+    <div class="ownrow">
+      <div class="min-w-0 flex-1">
+        <a href="#/leaderboard/${t.id}" class="own-name">${escapeHtml(t.name)}</a>
+        <div class="own-meta">
+          ${escapeHtml(formatOf(t).label)} · ${t.num_holes} holes
+          ${t.course_name ? ` · ${escapeHtml(t.course_name)}` : ""}
+          ${t.is_public === false ? ` · <span style="color:var(--ink-3)">Private</span>` : ""}
+        </div>
+      </div>
+      <button class="own-code" data-copy="${escapeHtml(t.join_code)}"
+              title="Copy the join code">${escapeHtml(t.join_code)}</button>
+      <a href="#/admin/${t.id}" class="own-manage">Manage</a>
+    </div>`;
+
+  const block = (title, list, emptyText) => `
+    <div class="sectionbar mt-5"><span class="t">${title}</span><span class="rule"></span></div>
+    ${list.length ? list.map(row).join("") : `<p class="text-sm muted p-4 text-center">${emptyText}</p>`}`;
+
+  app.innerHTML = `
+    <div class="idband">
+      <div class="idname" style="font-size:1.3rem">What I run</div>
+      <div class="idsub">${all.length} round${all.length === 1 ? "" : "s"} created on this account</div>
+    </div>
+
+    ${block("Matches", matches, "No matches yet.")}
+    ${block("Tournaments", tournaments, "No tournaments yet.")}
+
+    <div class="flex gap-2 mt-5">
+      <a href="#/match" class="btn-secondary flex-1 text-center">Create a match</a>
+      <a href="#/create" class="btn-secondary flex-1 text-center">Create a tournament</a>
+    </div>
+    <p class="text-xs muted-2 text-center mt-3">Tap a code to copy it. Anyone with the code can score.</p>
+  `;
+
+  app.querySelectorAll("[data-copy]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy);
+        toast(`Copied ${btn.dataset.copy}`);
+      } catch {
+        toast("Couldn't copy — the code is on screen", true);
+      }
+    });
+  });
 }
 
 // ---------- PLAYER RANKINGS ----------

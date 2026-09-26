@@ -1127,6 +1127,32 @@
   .sgrid .sg-dead { opacity: .45; }
   .sgrid td .hole-mark { margin: 0 auto; }
   .sgrid .sg-won .hole-mark { font-weight: 700; }
+
+  /* Rounds this account runs. */
+  .ownrow {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 11px; margin-bottom: 8px;
+  }
+  .own-name { display: block; font-weight: 700; font-size: .95rem; color: var(--ink); }
+  a.own-name:hover { color: var(--blue); }
+  .own-meta { font-size: .76rem; color: var(--ink-2); margin-top: 3px; }
+  .own-code {
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: .84rem;
+    letter-spacing: .1em; padding: 6px 10px; border-radius: 7px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--line-2); color: var(--ink);
+    flex: none;
+  }
+  .own-code:hover { background: var(--blue-lo); border-color: var(--blue); }
+  .own-manage {
+    flex: none; font-size: .8rem; font-weight: 600; color: #fff;
+    background: var(--navy); padding: 7px 13px; border-radius: 7px;
+  }
+  .own-manage:hover { background: var(--ink-700); }
+  @media (max-width: 520px) {
+    .ownrow { flex-wrap: wrap; }
+    .ownrow > .min-w-0 { flex: 1 1 100%; }
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1180,6 +1206,11 @@
               <span class="mi-s">You against someone, or two a side.</span>
             </a>
             <div class="menusep"></div>
+            <a href="#/mine" role="menuitem" class="menuitem">
+              <span class="mi-t">My tournaments &amp; matches</span>
+              <span class="mi-s">Codes, scores and settings for what you run.</span>
+            </a>
+            <div class="menusep"></div>
             <a href="#/tournaments" role="menuitem" class="menuitem"><span class="mi-t">Tournaments</span></a>
             <a href="#/players" role="menuitem" class="menuitem"><span class="mi-t">Rankings</span></a>
           </div>
@@ -1219,6 +1250,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926g"></script>
+  <script src="app.js?v=20260926h"></script>
 </body>
 </html>
