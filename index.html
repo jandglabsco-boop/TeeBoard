@@ -1269,6 +1269,16 @@
     .newscard:not(.lead).haspic { grid-template-columns: 72px 1fr; }
     .newscard:not(.lead) .newspic { width: 72px; height: 56px; }
   }
+
+  /* Stacked banners: the first keeps the full-bleed top, the rest are cards
+     so a page of them reads as a list rather than one endless dark field. */
+  .hero.stacked { margin: 0 0 14px; border-radius: 14px; border: 0; }
+  .hero.stacked:first-of-type { margin-top: -16px; border-radius: 0 0 14px 14px; }
+  .hero.stacked .hero-inner { padding: 26px 20px 28px; }
+  @media (min-width: 900px) {
+    .hero.stacked .hero-inner { padding: 32px 26px 34px; }
+    .hero.stacked .hero-name { font-size: 2.5rem; }
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1366,6 +1376,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926s"></script>
+  <script src="app.js?v=20260926u"></script>
 </body>
 </html>

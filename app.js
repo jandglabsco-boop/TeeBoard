@@ -1453,23 +1453,31 @@ async function viewHome() {
     .order("created_at", { ascending: false })
     .limit(6);
   const candidates = (recent || []).filter((t) => tournamentState(t, t.teams) !== "never_started");
-  const latest = candidates.find((t) => tournamentState(t, t.teams) === "live") || candidates[0] || null;
-  const latestState = latest ? tournamentState(latest, latest.teams) : null;
-  const latestTeams = latest ? (latest.teams || []).length : 0;
-  // A match is not ranked on a total. Showing one here was why a round played
-  // in +2 appeared as +7: the table was reporting NET strokes, and a plus
-  // handicap adds them back. A match reports holes, so it says so.
-  if (latest) {
-    if (isMatchFormat(latest)) latest.match = buildMatch(latest, latest.teams || []);
-    else latest.rows = buildLeaderboard(latest, latest.teams || []);
-  }
 
-  // Everything from the past week other than whichever round is in the hero.
-  // This was matches only, so a week with a match and a scramble in it showed
-  // the match and pretended the scramble had not happened.
+  // Every round from the past week gets its own banner, newest first — a week
+  // with a match and a scramble in it deserves two, not one and a footnote.
+  // Capped so a busy week doesn't turn the page into an endless scroll.
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const MAX_BANNERS = 3;
+  const banners = candidates
+    .filter((t) => Date.now() - new Date(t.created_at).getTime() < WEEK_MS)
+    // Anything still being played leads, then newest first.
+    .sort((a, b) => {
+      const liveA = tournamentState(a, a.teams) === "live" ? 1 : 0;
+      const liveB = tournamentState(b, b.teams) === "live" ? 1 : 0;
+      return liveB - liveA || new Date(b.created_at) - new Date(a.created_at);
+    })
+    .map((t) => {
+      if (isMatchFormat(t)) t.match = buildMatch(t, t.teams || []);
+      else t.rows = buildLeaderboard(t, t.teams || []);
+      return t;
+    })
+    .filter((t) => (t.match ? !t.match.incomplete : (t.rows || []).some((r) => r.thru > 0)))
+    .slice(0, MAX_BANNERS);
+
+  // Anything older, or past the cap, stays as a compact card below.
   const weekRounds = candidates
-    .filter((t) => (!latest || t.id !== latest.id)
+    .filter((t) => !banners.some((b) => b.id === t.id)
       && Date.now() - new Date(t.created_at).getTime() < WEEK_MS)
     .map((t) => {
       if (isMatchFormat(t)) t.match = buildMatch(t, t.teams || []);
@@ -1504,92 +1512,92 @@ async function viewHome() {
 
   app.innerHTML = `
     ${trialBannerHtml(billing)}
-    ${latest ? `
-      <section class="hero">
+    ${banners.map((t) => { const tState = tournamentState(t, t.teams); return `
+      <section class="hero${banners.length > 1 ? " stacked" : ""}">
         <div class="hero-inner">
           <div class="hero-left">
             <div class="hero-pills">
-              ${latestState === "live"
+              ${tState === "live"
                 ? `<span class="pill onair"><span class="dot"></span>PLAYING NOW</span>`
                 : `<span class="pill onair">FINAL</span>`}
-              <span class="pill men">${escapeHtml(formatOf(latest).label)}</span>
+              <span class="pill men">${escapeHtml(formatOf(t).label)}</span>
             </div>
             <div class="hero-row">
-              ${courseLogo(latest.course_name)
-                ? `<img class="hero-logo" src="${courseLogo(latest.course_name)}"
-                        alt="${escapeHtml(latest.course_name || "")}" />`
-                : `<div class="hero-logo hero-logo-text">${escapeHtml(initialsOf(latest.name))}</div>`}
+              ${courseLogo(t.course_name)
+                ? `<img class="hero-logo" src="${courseLogo(t.course_name)}"
+                        alt="${escapeHtml(t.course_name || "")}" />`
+                : `<div class="hero-logo hero-logo-text">${escapeHtml(initialsOf(t.name))}</div>`}
               <div class="min-w-0">
-                <h1 class="hero-name">${escapeHtml(latest.name)}</h1>
+                <h1 class="hero-name">${escapeHtml(t.name)}</h1>
                 <div class="hero-meta">
-                  ${escapeHtml(new Date(latest.created_at).toLocaleDateString(undefined,
+                  ${escapeHtml(new Date(t.created_at).toLocaleDateString(undefined,
                     { month: "short", day: "numeric", year: "numeric" }))}
-                  ${latest.course_name ? ` &nbsp;|&nbsp; ${escapeHtml(latest.course_name)}` : ""}
+                  ${t.course_name ? ` &nbsp;|&nbsp; ${escapeHtml(t.course_name)}` : ""}
                 </div>
-                <a href="#/leaderboard/${latest.id}" class="hero-link">${
-                  isMatchFormat(latest) ? "View match" : "View tournament"}</a>
+                <a href="#/leaderboard/${t.id}" class="hero-link">${
+                  isMatchFormat(t) ? "View match" : "View tournament"}</a>
               </div>
             </div>
           </div>
 
           <div class="hero-card">
-            ${latest.match ? `
-              ${latest.match.incomplete
+            ${t.match ? `
+              ${t.match.incomplete
                 ? `<p class="text-sm muted text-center py-8">Waiting on the second side.</p>`
                 : `<div class="heromatch">
-                     ${latest.match.sides.map((side, i) => {
-                       const up = i === 0 ? latest.match.up : -latest.match.up;
+                     ${t.match.sides.map((side, i) => {
+                       const up = i === 0 ? t.match.up : -t.match.up;
                        const standing = up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`;
-                       const won = latest.match.done && up > 0;
+                       const won = t.match.done && up > 0;
                        return `<div class="hm-row${up > 0 ? " ahead" : up < 0 ? " behind" : ""}">
                                  <span class="hm-name">${escapeHtml(side.players.map((p) => p.name).join(" & ") || side.name)}${
                                    won ? `<span class="wintag">Winner</span>` : ""}</span>
                                  <span class="hm-st">${standing}</span>
                                </div>`;
                      }).join("")}
-                     <div class="hm-foot">${latest.match.done
-                       ? (latest.match.up === 0 ? "Match halved" : `Won ${escapeHtml(latest.match.label)}`)
-                       : `${latest.match.played} of ${latest.num_holes} played`}</div>
+                     <div class="hm-foot">${t.match.done
+                       ? (t.match.up === 0 ? "Match halved" : `Won ${escapeHtml(t.match.label)}`)
+                       : `${t.match.played} of ${t.num_holes} played`}</div>
                    </div>`}
               <div style="padding:0 14px 14px">
-                <a href="#/leaderboard/${latest.id}" class="cardbtn" style="margin-top:0">View match</a>
+                <a href="#/leaderboard/${t.id}" class="cardbtn" style="margin-top:0">View match</a>
               </div>
             ` : `
             <div class="seg">
-              <span class="on">${formatOf(latest).ranks === "player" ? "Players" : "Teams"}</span>
-              <a href="#/leaderboard/${latest.id}">Full board</a>
+              <span class="on">${formatOf(t).ranks === "player" ? "Players" : "Teams"}</span>
+              <a href="#/leaderboard/${t.id}">Full board</a>
             </div>
-            ${(latest.rows || []).length ? `
+            ${(t.rows || []).length ? `
               <table class="dtable">
                 <thead>
                   <tr>
                     <th class="l" style="width:2.6rem">#</th>
-                    <th class="l">${formatOf(latest).ranks === "player" ? "Player" : "Team"}</th>
+                    <th class="l">${formatOf(t).ranks === "player" ? "Player" : "Team"}</th>
                     <th class="rule" style="width:4rem">Total</th>
                     <th class="rule" style="width:3.4rem">Thru</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${latest.rows.slice(0, 5).map((r) => `
-                    <tr class="tap" onclick="location.hash='#/leaderboard/${latest.id}'">
+                  ${t.rows.slice(0, 5).map((r) => `
+                    <tr class="tap" onclick="location.hash='#/leaderboard/${t.id}'">
                       <td class="l pos">${r.tied ? "T" : ""}${r.place}</td>
                       <td class="l" style="max-width:0"><div class="nm truncate">${escapeHtml(r.name)}</div></td>
                       <td class="rule"><span class="chip ${r.toPar < 0 ? "under" : "even"}">${r.thru ? toParLabel(r.toPar) : "–"}</span></td>
-                      <td class="rule num" style="color:var(--ink-2)">${r.thru || "–"}/${latest.num_holes}</td>
+                      <td class="rule num" style="color:var(--ink-2)">${r.thru || "–"}/${t.num_holes}</td>
                     </tr>`).join("")}
                 </tbody>
               </table>` : `<p class="text-sm muted text-center py-6">No scores yet.</p>`}
             <div style="padding:0 14px 14px">
-              <a href="#/leaderboard/${latest.id}" class="cardbtn" style="margin-top:0">View leaderboard</a>
+              <a href="#/leaderboard/${t.id}" class="cardbtn" style="margin-top:0">View leaderboard</a>
             </div>`}
           </div>
         </div>
       </section>
-    ` : ""}
+    `; }).join("")}
 
     ${weekRounds.length ? `
       <div class="sectionbar" style="margin-top:26px">
-        <span class="t">This week</span><span class="rule"></span>
+        <span class="t">Earlier this week</span><span class="rule"></span>
         <span class="n">${weekRounds.length}</span>
       </div>
       <div class="weekgrid">
@@ -1602,7 +1610,6 @@ async function viewHome() {
               <span class="pill ${state === "live" ? "onair" : ""}">${state === "live" ? "PLAYING" : "FINAL"}</span>
               <span class="wk-fmt">${escapeHtml(formatOf(t).label)}</span>
             </div>`;
-
           if (t.match) {
             const mm = t.match;
             return `
@@ -1623,8 +1630,6 @@ async function viewHome() {
                   : `${mm.played} of ${t.num_holes} played`} · ${day}</div>
               </a>`;
           }
-
-          // A tournament shows its leaders rather than a standing.
           const top = (t.rows || []).slice(0, 3);
           return `
             <a href="#/leaderboard/${t.id}" class="weekcard">
