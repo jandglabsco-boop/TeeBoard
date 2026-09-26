@@ -1113,6 +1113,20 @@
   }
   .hm-row.ahead .hm-st { color: var(--under); }
   .hm-foot { text-align: center; font-size: .76rem; color: var(--ink-2); padding: 4px 0 10px; }
+
+  /* Gross and net in one cell: the score made, and what it counts as. */
+  .sgrid .sg-g { font-variant-numeric: tabular-nums; }
+  .sgrid .sg-n {
+    display: inline-block; margin-left: 3px;
+    font-size: .68rem; font-weight: 700; color: var(--under);
+    vertical-align: super; font-variant-numeric: tabular-nums;
+  }
+  .sgrid .sg-won .sg-g { color: var(--under); font-weight: 700; }
+
+  /* Holes played after the match was decided. */
+  .sgrid .sg-dead { opacity: .45; }
+  .sgrid td .hole-mark { margin: 0 auto; }
+  .sgrid .sg-won .hole-mark { font-weight: 700; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1205,6 +1219,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926d"></script>
+  <script src="app.js?v=20260926g"></script>
 </body>
 </html>

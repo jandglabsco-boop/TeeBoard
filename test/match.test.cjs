@@ -116,11 +116,12 @@ const si9 = [1,2,3,4,5,6,7,8,9];
 // ---- plus handicaps ----
 {
   const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
-  // +4 over 9 holes plays 2: gives a stroke back on the two hardest holes.
+  // A plus golfer plays off scratch: no shots received, and none charged.
+  // A par must never be recorded as a bogey.
   const a = sandbox.strokeAllocation(T9, -4);
-  check('plus 4 over 9 holes gives back 2 strokes', a.filter(v => v === -1).length, 2);
-  check('  on the two hardest holes (SI 1 and 2)', [a[0], a[1]].join(','), '-1,-1');
-  check('  and nothing on the rest', a.slice(2).every(v => v === 0), true);
+  check('plus 4 receives nothing', a.filter(v => v > 0).length, 0);
+  check('  and is charged nothing', a.filter(v => v < 0).length, 0);
+  check('  so net equals gross everywhere', a.every(v => v === 0), true);
 
   // scratch is unchanged
   check('scratch gets nothing', sandbox.strokeAllocation(T9, 0).every(v => v === 0), true);
@@ -135,6 +136,24 @@ const si9 = [1,2,3,4,5,6,7,8,9];
   const m = sandbox.buildMatch({...T9, format:'match_singles'}, [side('A','A',[pro]), side('B','B',[hack])]);
   check('vs a +2, an 18-diff still allocates to the higher handicap', m.holes[0].winner, 1);
   check('  plus player plays off scratch in the match (net = gross)', m.holes[0].netA, 4);
+}
+
+// A plus 4.6 shooting +2 must read +2, not +7 — the bug this rule fixes.
+{
+  const T18 = { num_holes: 18, handicap: Array.from({length:18},(_,i)=>i+1), par: Array(18).fill(4) };
+  const alloc = sandbox.strokeAllocation(T18, -4.6);
+  const gross = Array(18).fill(4); gross[0] = 5; gross[1] = 5;   // +2 to par
+  const net = gross.reduce((a, g, i) => a + g - alloc[i], 0);
+  const parTotal = 72;
+  check('a Plus 4.6 shooting +2 reads +2, not +7', net - parTotal, 2);
+}
+
+// A shot-receiving player is unaffected by the change.
+{
+  const T18 = { num_holes: 18, handicap: Array.from({length:18},(_,i)=>i+1), par: Array(18).fill(4) };
+  const alloc = sandbox.strokeAllocation(T18, 9);
+  check('a 9 handicap still gets 9 shots', alloc.reduce((a,b)=>a+b,0), 9);
+  check('  one each on the nine hardest', alloc.slice(0,9).every(v=>v===1) && alloc.slice(9).every(v=>v===0), true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

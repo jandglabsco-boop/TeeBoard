@@ -295,15 +295,17 @@ const isPlayerScored = (t) => formatOf(t).scoring === "player";
 function strokeAllocation(tournament, handicap) {
   const n = tournament.num_holes;
   const alloc = Array(n).fill(0);
-  if (handicap == null || handicap === 0) return alloc;
+  // A player at or better than scratch receives nothing and is charged
+  // nothing. The strict convention has a plus handicap give strokes back, so
+  // a par would be recorded as a bogey — which is not how these rounds are
+  // played, and made a +2 round read as +7. A plus handicap still matters in
+  // a match, where it sets the mark everyone else takes their shots from:
+  // matchAllocations passes the DIFFERENCE, which is never negative.
+  if (handicap == null || handicap <= 0) return alloc;
 
-  // A plus handicap is better than scratch, so the player gives strokes back
-  // rather than receiving them: the allocation is negative and lands on the
-  // same hardest-first order. A +2 adds a shot on the two hardest holes.
   const playing = Math.round(n === 9 ? handicap / 2 : handicap);
-  if (playing === 0) return alloc;
-  const sign = playing < 0 ? -1 : 1;
-  const magnitude = Math.abs(playing);
+  if (playing <= 0) return alloc;
+  const magnitude = playing;
 
   const si = tournament.handicap && tournament.handicap.length === n
     ? tournament.handicap
@@ -316,7 +318,7 @@ function strokeAllocation(tournament, handicap) {
 
   const base = Math.floor(magnitude / n);
   const extra = magnitude % n;
-  for (let i = 0; i < n; i++) alloc[i] = sign * (base + (rank[i] <= extra ? 1 : 0));
+  for (let i = 0; i < n; i++) alloc[i] = base + (rank[i] <= extra ? 1 : 0);
   return alloc;
 }
 
@@ -497,16 +499,18 @@ function sideNetOnHole(side, hole, alloc, fmt) {
     // allowance (the combined difference, halved, per convention).
     const gross = side.teamScoreMap[hole];
     if (gross == null) return null;
-    return gross - (side.teamAlloc ? side.teamAlloc[hole - 1] : 0);
+    return { net: gross - (side.teamAlloc ? side.teamAlloc[hole - 1] : 0), gross };
   }
   // Singles and four-ball: each player's own ball. A side needs at least one
-  // player through the hole; the better net counts.
+  // player through the hole; the better net counts, and the gross carried
+  // alongside it is that same player's — the card should show the ball that
+  // actually won the hole, not the lower of two unrelated numbers.
   let best = null;
   for (const p of side.players) {
     const gross = p.scoreMap[hole];
     if (gross == null) continue;
     const net = gross - (alloc.get(p.id)?.[hole - 1] ?? 0);
-    if (best == null || net < best) best = net;
+    if (best == null || net < best.net) best = { net, gross };
   }
   return best;
 }
@@ -570,19 +574,29 @@ function buildMatch(tournament, teams) {
     const b = sideNetOnHole(sides[1], h, alloc, fmt);
     if (a == null || b == null) { holes.push({ hole: h, played: false }); continue; }
 
-    played++;
-    const winner = a < b ? 0 : b < a ? 1 : null;
-    if (winner === 0) up++;
-    else if (winner === 1) up--;
+    const winner = a.net < b.net ? 0 : b.net < a.net ? 1 : null;
 
-    const left = n - h;
-    holes.push({ hole: h, played: true, netA: a, netB: b, winner, standing: up });
+    // Holes after the close are still shown — people play them, and the card
+    // should show the round that was played — but they cannot move a result
+    // that is already decided. Only holes before the close count.
+    const dead = closedOnHole != null;
+    if (!dead) {
+      played++;
+      if (winner === 0) up++;
+      else if (winner === 1) up--;
+    }
 
-    // Once the lead exceeds the holes remaining the match is over. Stop there:
-    // holes past the close are not played, and counting a score somebody
-    // entered anyway would walk the result back from a win that already
-    // happened. Recording where it closed is what makes "3 & 2" mean anything.
-    if (Math.abs(up) > left) { closedOnHole = h; break; }
+    holes.push({
+      hole: h, played: true, dead,
+      netA: a.net, netB: b.net, grossA: a.gross, grossB: b.gross,
+      winner: dead ? null : winner,
+      holeWinner: winner,          // who had the better ball, decided or not
+      standing: up,
+    });
+
+    // Once the lead exceeds the holes remaining the match is over. Recording
+    // where it closed is what makes "3 & 2" mean anything.
+    if (!dead && Math.abs(up) > n - h) closedOnHole = h;
   }
 
   const holesLeft = closedOnHole != null ? n - closedOnHole : n - played;
@@ -3600,7 +3614,7 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label">Players</label>
         ${slot(0, "Player 1")}
         ${slot(1, "Player 2")}
-        <p class="text-xs muted-2 mt-1">Optional. The match plays off the difference, so the lower handicap gives shots. For a plus handicap enter a minus — a plus 2 is <b>-2</b>.</p>`;
+        <p class="text-xs muted-2 mt-1">Optional. The match plays off the difference, so the lower handicap gives shots. For a plus handicap enter a minus — a plus 2 is <b>-2</b>. A plus golfer plays off scratch: no shots given, none taken away.</p>`;
     } else {
       wrap.innerHTML = `
         <label class="field-label">Side one</label>
@@ -3609,7 +3623,7 @@ function renderCreateForm(user, billing, opts = {}) {
         <label class="field-label mt-3">Side two</label>
         ${slot(2, "Player 3")}
         ${slot(3, "Player 4")}
-        <p class="text-xs muted-2 mt-1">Optional. Everyone plays off the lowest handicap in the match. For a plus handicap enter a minus — a plus 2 is <b>-2</b>.</p>`;
+        <p class="text-xs muted-2 mt-1">Optional. Everyone plays off the lowest handicap in the match. For a plus handicap enter a minus — a plus 2 is <b>-2</b>. A plus golfer plays off scratch: no shots given, none taken away.</p>`;
     }
   }
   if (opts.match) {
@@ -4954,9 +4968,9 @@ function scoringAllocations(tournament, sides) {
 // A plus handicap gives one back, so the arrow can point the other way.
 function netHtml(gross, pops) {
   if (gross === "" || gross == null) return "";
-  if (!pops) return "";
+  if (!pops || pops <= 0) return "";
   const net = gross - pops;
-  return `<span class="netcell" title="${pops > 0 ? `${pops} shot${pops > 1 ? "s" : ""} here` : "gives a shot back here"}">
+  return `<span class="netcell" title="${pops} shot${pops > 1 ? "s" : ""} here">
             <span class="np-arrow">→</span><span class="np-net">${net}</span>
           </span>`;
 }
@@ -5077,8 +5091,8 @@ async function viewMatchScore(tournamentId) {
               return `
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-sm truncate ${v === "" ? "muted-2" : ""}">
-                    ${escapeHtml(p.name)}${(alloc.get(p.id)?.[h - 1] ?? 0) ? `<span class="popdot" title="gets a shot here">${
-                      (alloc.get(p.id)[h - 1] > 0 ? "•".repeat(Math.min(3, alloc.get(p.id)[h - 1])) : "+")
+                    ${escapeHtml(p.name)}${(alloc.get(p.id)?.[h - 1] ?? 0) > 0 ? `<span class="popdot" title="gets a shot here">${
+                      "•".repeat(Math.min(3, alloc.get(p.id)[h - 1]))
                     }</span>` : ""}
                   </span>
                   ${netHtml(v, alloc.get(p.id)?.[h - 1] ?? 0)}
@@ -5625,16 +5639,26 @@ async function renderMatchBoard(tournament, teams) {
                       if (!row || !row.played) return `<td class="sg-e">–</td>`;
                       const v = idx === 0 ? row.netA : row.netB;
                       const won = row.winner === idx;
-                      return `<td class="${won ? "sg-won" : ""}">${v}</td>`;
+                      const gross = idx === 0 ? row.grossA : row.grossB;
+                      // The score made, marked against par the way the rest of
+                      // the app marks it — birdies circled, bogeys squared —
+                      // with what it counts as after shots beside it.
+                      return `<td class="${won ? "sg-won" : ""}${row.dead ? " sg-dead" : ""}">
+                                <span class="hole-mark hole-mark-sm ${holeMarkClass(gross, par[h - 1])}">${gross}</span>
+                                ${gross !== v ? `<span class="sg-n">${v}</span>` : ""}
+                              </td>`;
                     }).join("")}
                     <td class="sg-tot">${(() => {
-                      // Net total for the holes actually played in this block.
-                      const t = block.reduce((a, h) => {
+                      let g = 0, nt = 0, any = false;
+                      block.forEach((h) => {
                         const r = m.holes.find((x) => x.hole === h);
-                        if (!r || !r.played) return a;
-                        return a + (idx === 0 ? r.netA : r.netB);
-                      }, 0);
-                      return t || "–";
+                        if (!r || !r.played) return;
+                        any = true;
+                        g += idx === 0 ? r.grossA : r.grossB;
+                        nt += idx === 0 ? r.netA : r.netB;
+                      });
+                      if (!any) return "–";
+                      return `<span class="sg-g">${g}</span>${g !== nt ? `<span class="sg-n">${nt}</span>` : ""}`;
                     })()}</td>
                   </tr>`).join("")}
                 <tr class="sg-run">
@@ -5642,6 +5666,7 @@ async function renderMatchBoard(tournament, teams) {
                   ${block.map((h) => {
                     const row = m.holes.find((x) => x.hole === h);
                     if (!row || !row.played) return `<td>–</td>`;
+                    if (row.dead) return `<td class="sg-dead">—</td>`;
                     const st = row.standing;
                     return `<td>${st === 0 ? "A/S" : `${Math.abs(st)}${st > 0 ? "↑" : "↓"}`}</td>`;
                   }).join("")}
@@ -5654,7 +5679,9 @@ async function renderMatchBoard(tournament, teams) {
         return blocks.map((b, i) => grid(b, blocks.length > 1 ? (i === 0 ? "Front" : "Back") : null)).join("");
       })()}
       <p class="text-xs muted-2 mt-2 text-center">
-        Net of handicap strokes. ↑ means ${escapeHtml(nameOf(A))} is up, ↓ means ${escapeHtml(nameOf(B))} is.
+        Circled is a birdie, squared a bogey. The small number is what the score counts as after shots.
+        ↑ means ${escapeHtml(nameOf(A))} is up, ↓ means ${escapeHtml(nameOf(B))} is.
+        ${m.closedOnHole ? `Holes after ${holeLabel(tournament, m.closedOnHole)} are shown but didn't count — the match was already won.` : ""}
       </p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}
   `;
