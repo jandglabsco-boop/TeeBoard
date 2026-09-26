@@ -5772,7 +5772,12 @@ async function renderMatchBoard(tournament, teams) {
     if (user && tournament.created_by === user.id) shareCode = tournament.join_code || null;
   }
 
-  const metaBits = [fmt.label, `${tournament.num_holes} holes`, tournament.course_name || null].filter(Boolean);
+  const metaBits = [
+    fmt.label,
+    `${tournament.num_holes} holes`,
+    tournament.course_name || null,
+    tournament.tee_name ? `${tournament.tee_name} tees` : null,
+  ].filter(Boolean);
   const head = `
     <div class="idband">
       <div class="idband-top">
@@ -5882,6 +5887,16 @@ async function renderMatchBoard(tournament, teams) {
         // The Match row is read from one side's point of view throughout.
         const refTag = sideTag(m.sides[0]);
 
+        // Yardage and stroke index, when the course gave them. The stroke
+        // index is what decides which holes a shot falls on, so a card that
+        // shows the shots should show the order they were allocated in.
+        const n2 = tournament.num_holes;
+        const yds = Array.isArray(tournament.yardage) && tournament.yardage.length === n2
+          ? tournament.yardage : null;
+        const si = Array.isArray(tournament.handicap) && tournament.handicap.length === n2
+          ? tournament.handicap : null;
+        const ydsSum = (holesList) => holesList.reduce((a, h) => a + (yds?.[h - 1] || 0), 0);
+
         // "Out", "In", then the round — the columns a paper card carries.
         const grid = (block, label, blockLabel, withRound) => `
           <div class="cardwrap">
@@ -5894,12 +5909,26 @@ async function renderMatchBoard(tournament, teams) {
                   <th class="sg-tot">${blockLabel}</th>
                   ${withRound ? `<th class="sg-tot sg-round">Tot</th>` : ""}
                 </tr>
+                ${yds ? `
+                  <tr class="sg-yds">
+                    <th class="sg-rl">Yds</th>
+                    ${block.map((h) => `<td>${yds[h - 1] ?? "–"}</td>`).join("")}
+                    <td class="sg-tot">${ydsSum(block)}</td>
+                    ${withRound ? `<td class="sg-tot sg-round">${ydsSum(nums)}</td>` : ""}
+                  </tr>` : ""}
                 <tr class="sg-par">
                   <th class="sg-rl">Par</th>
                   ${block.map((h) => `<td>${par[h - 1] ?? "–"}</td>`).join("")}
                   <td class="sg-tot">${parSum(block)}</td>
                   ${withRound ? `<td class="sg-tot sg-round">${parSum(nums)}</td>` : ""}
                 </tr>
+                ${si ? `
+                  <tr class="sg-si">
+                    <th class="sg-rl">Hcp</th>
+                    ${block.map((h) => `<td>${si[h - 1] ?? "–"}</td>`).join("")}
+                    <td class="sg-tot">–</td>
+                    ${withRound ? `<td class="sg-tot sg-round">–</td>` : ""}
+                  </tr>` : ""}
                 ${[0, 1].map((idx) => `
                   <tr>
                     <th class="sg-rl sg-side">${escapeHtml(nameOf(m.sides[idx]))}</th>

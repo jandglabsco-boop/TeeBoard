@@ -1231,6 +1231,16 @@
   .wk-side.behind .wk-st { color: var(--under); }
   .wk-foot { font-size: .72rem; color: var(--ink-2); margin-top: 8px; }
   .weekcard .wintag { font-size: .55rem; padding: 2px 5px; margin-left: 0; }
+
+  /* Yardage and stroke index: reference rows, quieter than the scores. */
+  .sgrid .sg-yds td, .sgrid .sg-yds th {
+    font-size: .72rem; color: var(--ink-2); background: var(--surface);
+  }
+  .sgrid .sg-si td, .sgrid .sg-si th {
+    font-size: .7rem; color: var(--ink-3); background: var(--surface);
+    border-bottom: 2px solid var(--line-2);
+  }
+  .sgrid .sg-yds .sg-rl, .sgrid .sg-si .sg-rl { background: var(--surface); }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1328,6 +1338,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926p"></script>
+  <script src="app.js?v=20260926q"></script>
 </body>
 </html>
