@@ -2074,6 +2074,13 @@ function pointsForPlace(place) {
   return PLACE_POINTS[place - 1] ?? PLACE_POINTS_TAIL;
 }
 
+// A top-three finish has to mean finishing ahead of somebody. Second of two
+// is last, not a podium — and a 2-player match was counting the loser's
+// second place as one. Requires a top-three place AND a field bigger than it.
+function isPodium(place, fieldSize) {
+  return place <= 3 && place < fieldSize;
+}
+
 function emptyModeStats() {
   return {
     rounds: 0, points: 0, wins: 0, podiums: 0, bestFinish: null, finishes: [],
@@ -2155,14 +2162,14 @@ function buildCareerStats(tournaments, since = SEASON_START) {
           if (st.bestFinish == null || place < st.bestFinish) st.bestFinish = place;
           // Only an outright winner has won something.
           if (!halved && place === 1) st.wins += 1;
-          if (place <= 3) st.podiums += 1;
+          if (isPodium(place, m.sides.length)) st.podiums += 1;
 
           mm.rounds += 1;
           mm.points += points;
           mm.finishes.push(place);
           if (mm.bestFinish == null || place < mm.bestFinish) mm.bestFinish = place;
           if (!halved && place === 1) mm.wins += 1;
-          if (place <= 3) mm.podiums += 1;
+          if (isPodium(place, m.sides.length)) mm.podiums += 1;
 
           // Holes, where the player actually holed their own ball. Foursomes
           // is one ball between two, so there is no individual record to keep.
@@ -2251,7 +2258,7 @@ function buildCareerStats(tournaments, since = SEASON_START) {
         s.finishes.push(row.place);
         if (s.bestFinish == null || row.place < s.bestFinish) s.bestFinish = row.place;
         if (contested && row.place === 1) s.wins += 1;
-        if (contested && row.place <= 3) s.podiums += 1;
+        if (contested && isPodium(row.place, started.length)) s.podiums += 1;
         s.toPar += row.toPar;
 
         m.rounds += 1;
@@ -2259,7 +2266,7 @@ function buildCareerStats(tournaments, since = SEASON_START) {
         m.finishes.push(row.place);
         if (m.bestFinish == null || row.place < m.bestFinish) m.bestFinish = row.place;
         if (contested && row.place === 1) m.wins += 1;
-        if (contested && row.place <= 3) m.podiums += 1;
+        if (contested && isPodium(row.place, started.length)) m.podiums += 1;
 
         for (let h = 1; h <= t.num_holes; h++) {
           const strokes = row.scoreMap[h];

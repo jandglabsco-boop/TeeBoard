@@ -229,4 +229,28 @@ const si9 = [1,2,3,4,5,6,7,8,9];
   check('  career total still counts them', p1.birdies, 3);
 }
 
+// ---- second of two is last, not a podium ----
+{
+  check('winning a 2-player match is a podium', sandbox.isPodium(1, 2), true);
+  check('losing one is not', sandbox.isPodium(2, 2), false);
+  check('3rd of 3 is last, so not a podium', sandbox.isPodium(3, 3), false);
+  check('3rd of 7 is', sandbox.isPodium(3, 7), true);
+  check('4th of 7 is not top three', sandbox.isPodium(4, 7), false);
+
+  // End to end: the loser of a singles match gets a round, no win, no podium.
+  const T9 = { num_holes: 9, handicap: [1,2,3,4,5,6,7,8,9], par: Array(9).fill(4) };
+  const side = (id,name,players) => ({ id, name,
+    team_members: players.map(p=>({id:p.id,player_name:p.name,handicap:p.hc})),
+    scores: players.flatMap(p => Object.entries(p.s||{}).map(([h,v]) => ({hole_number:+h, strokes:v, team_member_id:p.id}))),
+    signed_at: null });
+  const t = {...T9, format:'match_singles', created_at:'2026-09-25T00:00:00Z',
+    teams:[side('A','Loser',[{id:'a',name:'Loser',hc:0,s:{1:5,2:5,3:5,4:5,5:5}}]),
+           side('B','Winner',[{id:'b',name:'Winner',hc:0,s:{1:4,2:4,3:4,4:4,5:4}}])]};
+  const stats = sandbox.buildCareerStats([t], '2026-09-24');
+  const byName = Object.fromEntries(stats.map(p => [p.name, p]));
+  check('the loser of a 1v1 gets no podium', byName['Loser'].podiums, 0);
+  check('  but still a round', byName['Loser'].rounds, 1);
+  check('the winner does get one', byName['Winner'].podiums, 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
