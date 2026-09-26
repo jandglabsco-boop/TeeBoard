@@ -5872,6 +5872,9 @@ async function renderMatchBoard(tournament, teams) {
           : `<span class="sg-g">${t.gross}</span>${t.gross !== t.net ? `<span class="sg-n">${t.net}</span>` : ""}`);
         const parSum = (holesList) => holesList.reduce((a, h) => a + (par[h - 1] || 0), 0);
 
+        // The Match row is read from one side's point of view throughout.
+        const refTag = sideTag(m.sides[0]);
+
         // "Out", "In", then the round — the columns a paper card carries.
         const grid = (block, label, blockLabel, withRound) => `
           <div class="cardwrap">
@@ -5911,7 +5914,7 @@ async function renderMatchBoard(tournament, teams) {
                     ${withRound ? `<td class="sg-tot sg-round">${cell(sumFor(nums, idx))}</td>` : ""}
                   </tr>`).join("")}
                 <tr class="sg-run">
-                  <th class="sg-rl">Match</th>
+                  <th class="sg-rl">Match <span class="sg-ref">${escapeHtml(refTag)}</span></th>
                   ${block.map((h) => {
                     const row = m.holes.find((x) => x.hole === h);
                     if (!row || !row.played) return `<td>–</td>`;
@@ -5921,13 +5924,14 @@ async function renderMatchBoard(tournament, teams) {
                     // Name the side that is up. An arrow alone made the reader
                     // hold "up means the top row" in their head all the way
                     // down the card.
-                    const leadIdx = st > 0 ? 0 : 1;
-                    const who = sideTag(m.sides[leadIdx]);
-                    // Whoever is named is the one up, and the arrow points at
-                    // their row — first or second — so the two agree.
-                    return `<td class="sg-lead">
-                              <span class="sg-who">${escapeHtml(who)}</span>
-                              <span class="sg-up">${Math.abs(st)}${leadIdx === 0 ? "↑" : "↓"}</span>
+                    // One point of view for the whole row — the first side —
+                    // so the arrow means up or down rather than which row is
+                    // being named. Naming whichever side was ahead made "RL 1↓"
+                    // read as RL being one down at the moment he was one up.
+                    const up = st > 0;
+                    return `<td class="sg-lead ${up ? "is-up" : "is-dn"}">
+                              <span class="sg-who">${escapeHtml(refTag)}</span>
+                              <span class="sg-up">${Math.abs(st)}${up ? "↑" : "↓"}</span>
                             </td>`;
                   }).join("")}
                   <td class="sg-tot">${m.label}</td>
@@ -5988,8 +5992,8 @@ async function renderMatchBoard(tournament, teams) {
       })()}
       <p class="text-xs muted-2 mt-2 text-center">
         Circled is a birdie, squared a bogey. The small red number is what the score counts as after shots.
-        On the Match row, <b>${escapeHtml(sideTag(A))}</b> is ${escapeHtml(nameOf(A))} and
-        <b>${escapeHtml(sideTag(B))}</b> is ${escapeHtml(nameOf(B))}; whoever is named is the one up.
+        The Match row is ${escapeHtml(nameOf(A))}'s point of view — <b>${escapeHtml(sideTag(A))}</b> ↑ is
+        ${escapeHtml(nameOf(A))} up, <b>${escapeHtml(sideTag(A))}</b> ↓ is ${escapeHtml(nameOf(A))} down.
         ${m.closedOnHole ? `Holes after ${holeLabel(tournament, m.closedOnHole)} are shown but didn't count — the match was already won.` : ""}
       </p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}

@@ -1164,10 +1164,23 @@
   .sgrid .sg-lead { white-space: nowrap; }
   .sgrid .sg-who {
     display: inline-block; font-family: 'Barlow', sans-serif; font-weight: 700;
-    font-size: .68rem; letter-spacing: .06em; color: #1668C4;
-    background: #EAF2FB; border-radius: 4px; padding: 1px 4px; margin-right: 4px;
+    font-size: .66rem; letter-spacing: .06em; border-radius: 4px;
+    padding: 1px 4px; margin-right: 4px;
   }
-  .sgrid .sg-up { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink); }
+  .sgrid .sg-up { font-variant-numeric: tabular-nums; font-weight: 700; }
+  /* Up is blue and down is red here too, so the row carries the same meaning
+     as the standings above it without having to be read twice. */
+  .sgrid .is-up .sg-who { color: #1668C4; background: #EAF2FB; }
+  .sgrid .is-up .sg-up  { color: #1668C4; }
+  .sgrid .is-dn .sg-who { color: var(--under); background: #FDEEEE; }
+  .sgrid .is-dn .sg-up  { color: var(--under); }
+  /* Whose point of view the row is written from, stated in its label. */
+  .sgrid .sg-ref {
+    display: inline-block; font-family: 'Barlow', sans-serif; font-weight: 700;
+    font-size: .6rem; letter-spacing: .06em; color: var(--ink-3);
+    background: var(--surface); border: 1px solid var(--line-2);
+    border-radius: 4px; padding: 0 4px; margin-left: 4px;
+  }
 
   /* Up is blue, down is red — one scale, used the same way in both places. */
   .wintag {
@@ -1315,6 +1328,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926n"></script>
+  <script src="app.js?v=20260926o"></script>
 </body>
 </html>
