@@ -1301,6 +1301,21 @@
   .pb-sep { width: 1px; height: 34px; background: rgba(255,255,255,.14); }
   @media (max-width: 460px) { .pb-sep { display: none; } }
 
+  .pb-app { display: flex; align-items: center; gap: 10px; }
+  .pb-icon {
+    width: 40px; height: 40px; border-radius: 9px; flex: none;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08);
+  }
+  .pb-appname { display: flex; flex-direction: column; line-height: 1; }
+  .pb-forged {
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.35rem;
+    color: #fff; letter-spacing: .01em;
+  }
+  .pb-forged-sub {
+    font-size: .64rem; letter-spacing: .16em; text-transform: uppercase;
+    color: #E8622C; margin-top: 4px; font-weight: 600;
+  }
+
   .pb-wordmark { display: flex; flex-direction: column; align-items: center; line-height: 1; }
   .pb-butte {
     font-family: 'Barlow', sans-serif; font-weight: 700; font-size: 1.55rem;
@@ -1388,10 +1403,25 @@
       <div class="pb-logos">
         <img class="pb-logo" src="img/partners/swing-sense.png"
              alt="Swing Sense" width="440" height="251" loading="lazy" />
+
         <span class="pb-sep" aria-hidden="true"></span>
+
         <span class="pb-wordmark">
           <span class="pb-butte">Butte</span>
-          <span class="pb-water">Water Sports</span>
+          <span class="pb-water">Watersports</span>
+        </span>
+
+        <span class="pb-sep" aria-hidden="true"></span>
+
+        <!-- An app icon, so it keeps its rounded square rather than being
+             blended flat like the Swing Sense mark. -->
+        <span class="pb-app">
+          <img class="pb-icon" src="img/partners/forged.png"
+               alt="" width="200" height="200" loading="lazy" />
+          <span class="pb-appname">
+            <span class="pb-forged">Forged</span>
+            <span class="pb-forged-sub">AI Calorie Tracker</span>
+          </span>
         </span>
       </div>
     </div>
@@ -1424,6 +1454,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926w"></script>
+  <script src="app.js?v=20260926y"></script>
 </body>
 </html>
