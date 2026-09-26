@@ -1522,7 +1522,8 @@ async function viewHome() {
                     { month: "short", day: "numeric", year: "numeric" }))}
                   ${latest.course_name ? ` &nbsp;|&nbsp; ${escapeHtml(latest.course_name)}` : ""}
                 </div>
-                <a href="#/leaderboard/${latest.id}" class="hero-link">View tournament</a>
+                <a href="#/leaderboard/${latest.id}" class="hero-link">${
+                  isMatchFormat(latest) ? "View match" : "View tournament"}</a>
               </div>
             </div>
           </div>
@@ -2514,10 +2515,10 @@ async function viewTournaments(tab) {
             ${t.match.incomplete
               ? `<p class="text-sm muted text-center py-5">Waiting on the second side.</p>`
               : `<div class="matchmini">
-                   <div class="mm-side${t.match.up > 0 ? " ahead" : ""}">${escapeHtml(
+                   <div class="mm-side${t.match.up > 0 ? " ahead" : t.match.up < 0 ? " behind" : ""}">${escapeHtml(
                      t.match.sides[0].players.map((p) => p.name).join(" & ") || t.match.sides[0].name)}</div>
                    <div class="mm-vs">vs</div>
-                   <div class="mm-side${t.match.up < 0 ? " ahead" : ""}">${escapeHtml(
+                   <div class="mm-side${t.match.up < 0 ? " ahead" : t.match.up > 0 ? " behind" : ""}">${escapeHtml(
                      t.match.sides[1].players.map((p) => p.name).join(" & ") || t.match.sides[1].name)}</div>
                  </div>
                  <div class="mm-result">${t.match.up === 0
@@ -5920,8 +5921,14 @@ async function renderMatchBoard(tournament, teams) {
                     // Name the side that is up. An arrow alone made the reader
                     // hold "up means the top row" in their head all the way
                     // down the card.
-                    const who = st > 0 ? sideTag(m.sides[0]) : sideTag(m.sides[1]);
-                    return `<td><span class="sg-up">${Math.abs(st)}${st > 0 ? "↑" : "↓"}</span><span class="sg-who">${escapeHtml(who)}</span></td>`;
+                    const leadIdx = st > 0 ? 0 : 1;
+                    const who = sideTag(m.sides[leadIdx]);
+                    // Whoever is named is the one up, and the arrow points at
+                    // their row — first or second — so the two agree.
+                    return `<td class="sg-lead">
+                              <span class="sg-who">${escapeHtml(who)}</span>
+                              <span class="sg-up">${Math.abs(st)}${leadIdx === 0 ? "↑" : "↓"}</span>
+                            </td>`;
                   }).join("")}
                   <td class="sg-tot">${m.label}</td>
                   ${withRound ? `<td class="sg-tot sg-round">${m.label}</td>` : ""}
@@ -5981,6 +5988,8 @@ async function renderMatchBoard(tournament, teams) {
       })()}
       <p class="text-xs muted-2 mt-2 text-center">
         Circled is a birdie, squared a bogey. The small red number is what the score counts as after shots.
+        On the Match row, <b>${escapeHtml(sideTag(A))}</b> is ${escapeHtml(nameOf(A))} and
+        <b>${escapeHtml(sideTag(B))}</b> is ${escapeHtml(nameOf(B))}; whoever is named is the one up.
         ${m.closedOnHole ? `Holes after ${holeLabel(tournament, m.closedOnHole)} are shown but didn't count — the match was already won.` : ""}
       </p>
     ` : `<p class="text-sm muted text-center p-6">No holes scored yet.</p>`}

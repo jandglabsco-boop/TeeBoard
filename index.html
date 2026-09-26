@@ -976,7 +976,8 @@
     font-weight: 600; font-size: .86rem; text-align: center; line-height: 1.25;
     padding: 9px 7px; border-radius: 9px; background: var(--surface-2); color: var(--ink-2);
   }
-  .mm-side.ahead { background: var(--blue-lo); color: var(--ink); }
+  .mm-side.ahead  { background: #EAF2FB; color: var(--ink); }
+  .mm-side.behind { background: #FDEEEE; color: var(--ink); }
   .mm-vs { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
   .mm-result {
     margin-top: 10px; text-align: center; font-family: 'Barlow', sans-serif;
@@ -1158,10 +1159,15 @@
   }
 
   .sgrid .sg-up { font-variant-numeric: tabular-nums; }
+  /* The side that is up, named before the arrow rather than under it in
+     grey — the point of the cell is who, not just how many. */
+  .sgrid .sg-lead { white-space: nowrap; }
   .sgrid .sg-who {
-    display: block; font-size: .62rem; letter-spacing: .06em;
-    color: var(--ink-3); font-weight: 700; margin-top: 1px;
+    display: inline-block; font-family: 'Barlow', sans-serif; font-weight: 700;
+    font-size: .68rem; letter-spacing: .06em; color: #1668C4;
+    background: #EAF2FB; border-radius: 4px; padding: 1px 4px; margin-right: 4px;
   }
+  .sgrid .sg-up { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink); }
 
   /* Up is blue, down is red — one scale, used the same way in both places. */
   .wintag {
@@ -1309,6 +1315,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926m"></script>
+  <script src="app.js?v=20260926n"></script>
 </body>
 </html>
