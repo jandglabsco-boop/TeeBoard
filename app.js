@@ -1464,15 +1464,19 @@ async function viewHome() {
     else latest.rows = buildLeaderboard(latest, latest.teams || []);
   }
 
-  // Matches from the past week, other than whichever one is in the hero. A
-  // group that plays several in a week had them all collapse to one.
+  // Everything from the past week other than whichever round is in the hero.
+  // This was matches only, so a week with a match and a scramble in it showed
+  // the match and pretended the scramble had not happened.
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-  const weekMatches = candidates
-    .filter((t) => isMatchFormat(t)
-      && (!latest || t.id !== latest.id)
+  const weekRounds = candidates
+    .filter((t) => (!latest || t.id !== latest.id)
       && Date.now() - new Date(t.created_at).getTime() < WEEK_MS)
-    .map((t) => { t.match = buildMatch(t, t.teams || []); return t; })
-    .filter((t) => !t.match.incomplete);
+    .map((t) => {
+      if (isMatchFormat(t)) t.match = buildMatch(t, t.teams || []);
+      else t.rows = buildLeaderboard(t, t.teams || []);
+      return t;
+    })
+    .filter((t) => (t.match ? !t.match.incomplete : (t.rows || []).some((r) => r.thru > 0)));
 
   // Only ever what this account actually created. Nothing device-local feeds
   // this list, so signing in on someone else's phone shows you your own
@@ -1583,35 +1587,55 @@ async function viewHome() {
       </section>
     ` : ""}
 
-    ${weekMatches.length ? `
+    ${weekRounds.length ? `
       <div class="sectionbar" style="margin-top:26px">
-        <span class="t">This week's matches</span><span class="rule"></span>
-        <span class="n">${weekMatches.length}</span>
+        <span class="t">This week</span><span class="rule"></span>
+        <span class="n">${weekRounds.length}</span>
       </div>
       <div class="weekgrid">
-        ${weekMatches.map((t) => {
-          const mm = t.match;
+        ${weekRounds.map((t) => {
           const state = tournamentState(t, t.teams);
+          const day = escapeHtml(new Date(t.created_at)
+            .toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }));
+          const head = `
+            <div class="wk-top">
+              <span class="pill ${state === "live" ? "onair" : ""}">${state === "live" ? "PLAYING" : "FINAL"}</span>
+              <span class="wk-fmt">${escapeHtml(formatOf(t).label)}</span>
+            </div>`;
+
+          if (t.match) {
+            const mm = t.match;
+            return `
+              <a href="#/leaderboard/${t.id}" class="weekcard">
+                ${head}
+                ${mm.sides.map((side, i) => {
+                  const up = i === 0 ? mm.up : -mm.up;
+                  const won = mm.done && up > 0;
+                  return `
+                    <div class="wk-side${up > 0 ? " ahead" : up < 0 ? " behind" : ""}">
+                      <span class="wk-name">${escapeHtml(side.players.map((pl) => pl.name).join(" & ") || side.name)}</span>
+                      <span class="wk-st">${up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`}${
+                        won ? `<span class="wintag">Won</span>` : ""}</span>
+                    </div>`;
+                }).join("")}
+                <div class="wk-foot">${mm.done
+                  ? (mm.up === 0 ? "Halved" : `Won ${escapeHtml(mm.label)}`)
+                  : `${mm.played} of ${t.num_holes} played`} · ${day}</div>
+              </a>`;
+          }
+
+          // A tournament shows its leaders rather than a standing.
+          const top = (t.rows || []).slice(0, 3);
           return `
             <a href="#/leaderboard/${t.id}" class="weekcard">
-              <div class="wk-top">
-                <span class="pill ${state === "live" ? "onair" : ""}">${state === "live" ? "PLAYING" : "FINAL"}</span>
-                <span class="wk-fmt">${escapeHtml(formatOf(t).label)}</span>
-              </div>
-              ${mm.sides.map((side, i) => {
-                const up = i === 0 ? mm.up : -mm.up;
-                const won = mm.done && up > 0;
-                return `
-                  <div class="wk-side${up > 0 ? " ahead" : up < 0 ? " behind" : ""}">
-                    <span class="wk-name">${escapeHtml(side.players.map((pl) => pl.name).join(" & ") || side.name)}</span>
-                    <span class="wk-st">${up === 0 ? "A/S" : up > 0 ? `${up} up` : `${Math.abs(up)} dn`}${
-                      won ? `<span class="wintag">Won</span>` : ""}</span>
-                  </div>`;
-              }).join("")}
-              <div class="wk-foot">${mm.done
-                ? (mm.up === 0 ? "Halved" : `Won ${escapeHtml(mm.label)}`)
-                : `${mm.played} of ${t.num_holes} played`} · ${escapeHtml(
-                  new Date(t.created_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))}</div>
+              ${head}
+              <div class="wk-name" style="margin-bottom:8px">${escapeHtml(t.name)}</div>
+              ${top.map((r, i) => `
+                <div class="wk-side${i === 0 ? " ahead" : ""}">
+                  <span class="wk-name">${r.tied ? "T" : ""}${r.place}. ${escapeHtml(r.name)}</span>
+                  <span class="wk-st">${r.thru ? escapeHtml(toParLabel(r.toPar)) : "–"}</span>
+                </div>`).join("")}
+              <div class="wk-foot">${(t.teams || []).length} ${formatOf(t).ranks === "player" ? "players" : "teams"} · ${day}</div>
             </a>`;
         }).join("")}
       </div>
@@ -2430,13 +2454,20 @@ async function renderNews(slotId = "news-slot") {
   if (!items.length) return;
 
   const [lead, ...rest] = items;
+  // The picture is decoration, so it never blocks the headline: it loads
+  // lazily and removes itself if it fails, leaving the card as it was.
   const card = (n, big) => `
     <a href="${escapeHtml(n.link)}" target="_blank" rel="noopener noreferrer"
-       class="newscard${big ? " lead" : ""}">
-      <span class="newssrc">${escapeHtml(n.source)}</span>
-      <span class="newstitle">${escapeHtml(n.title)}</span>
-      ${big && n.summary ? `<span class="newssum">${escapeHtml(n.summary)}</span>` : ""}
-      <span class="newsdate">${escapeHtml(newsTimeAgo(n.publishedAt))}</span>
+       class="newscard${big ? " lead" : ""}${n.image ? " haspic" : ""}">
+      ${n.image ? `<img class="newspic" src="${escapeHtml(n.image)}" alt="" loading="lazy"
+                        referrerpolicy="no-referrer"
+                        onerror="this.closest('.newscard').classList.remove('haspic'); this.remove();" />` : ""}
+      <span class="newsbody">
+        <span class="newssrc">${escapeHtml(n.source)}</span>
+        <span class="newstitle">${escapeHtml(n.title)}</span>
+        ${big && n.summary ? `<span class="newssum">${escapeHtml(n.summary)}</span>` : ""}
+        <span class="newsdate">${escapeHtml(newsTimeAgo(n.publishedAt))}</span>
+      </span>
     </a>`;
 
   slot.innerHTML = `

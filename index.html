@@ -1241,6 +1241,34 @@
     border-bottom: 2px solid var(--line-2);
   }
   .sgrid .sg-yds .sg-rl, .sgrid .sg-si .sg-rl { background: var(--surface); }
+
+  /* News pictures. The lead card lays its text over the image; the smaller
+     ones put it alongside. Both read the same with no picture at all. */
+  .newscard { position: relative; overflow: hidden; }
+  .newsbody { display: flex; flex-direction: column; gap: 7px; position: relative; z-index: 1; }
+
+  .newscard.lead .newspic {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; z-index: 0;
+  }
+  /* A scrim, so white text stays readable over whatever the photo is. */
+  .newscard.lead.haspic::after {
+    content: ""; position: absolute; inset: 0; z-index: 0;
+    background: linear-gradient(to top, rgba(8,12,16,.92) 0%, rgba(8,12,16,.72) 45%, rgba(8,12,16,.25) 100%);
+  }
+  .newscard.lead.haspic { background: #0B1014; }
+
+  .newscard:not(.lead).haspic {
+    display: grid; grid-template-columns: 92px 1fr; gap: 12px;
+    align-items: center; padding: 10px 14px 10px 10px;
+  }
+  .newscard:not(.lead) .newspic {
+    width: 92px; height: 68px; object-fit: cover; border-radius: 8px;
+  }
+  @media (max-width: 420px) {
+    .newscard:not(.lead).haspic { grid-template-columns: 72px 1fr; }
+    .newscard:not(.lead) .newspic { width: 72px; height: 56px; }
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1338,6 +1366,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20260926q"></script>
+  <script src="app.js?v=20260926s"></script>
 </body>
 </html>
