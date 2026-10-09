@@ -2832,7 +2832,7 @@ async function viewPlayers(modeRaw) {
           <tbody>
             ${ranked.map((p) => `
               <tr class="tap prow" data-name="${escapeHtml(p.name.toLowerCase())}"
-                  onclick="location.hash='#/player/${encodeURIComponent(p.key)}'">
+                  onclick="location.hash='#/player/${encodeURIComponent(p.key)}?mode=${mode}'">
                 <td class="l pos">${p.tiedRank ? "T" : ""}${p.rank}</td>
                 <td class="l" style="max-width:0">
                   <div class="nm truncate">${escapeHtml(p.name)}</div>
@@ -2883,7 +2883,13 @@ async function viewPlayers(modeRaw) {
 
 async function viewPlayer(keyRaw) {
   app.innerHTML = loadingHtml();
-  const key = decodeURIComponent(keyRaw || "").toLowerCase();
+
+  // The route captures everything after #/player/, query string included, so
+  // the name is split off it rather than decoded whole.
+  const [namePart, queryPart] = String(keyRaw || "").split("?");
+  const key = decodeURIComponent(namePart).toLowerCase();
+  const askedMode = new URLSearchParams(queryPart || "").get("mode");
+  const mode = RANKING_MODES[askedMode] ? askedMode : "all";
 
   let players;
   try {
@@ -2899,7 +2905,11 @@ async function viewPlayer(keyRaw) {
     return;
   }
 
-  const scoringHoles = p.holesPlayed || 1;
+  // "all" is the career record; a mode is that competition only. Both carry
+  // the same shape, so everything below reads from `view` and does not care.
+  const view = mode === "all" ? p : p.byMode[mode];
+  const history = mode === "all" ? p.history : p.history.filter((h) => h.mode === mode);
+  const scoringHoles = view.holesPlayed || 1;
   const pct = (n) => `${Math.round((n / scoringHoles) * 100)}%`;
   const rankIn = (mode) => {
     const row = rankedFor(players, mode).find((x) => x.key === key);
@@ -2918,7 +2928,8 @@ async function viewPlayer(keyRaw) {
         <div class="idband-meta">
           ${bestRank ? `<span class="pill on-dark">#${bestRank} THIS SEASON</span>` : ""}
           <div class="idname">${escapeHtml(p.name)}</div>
-          <div class="idsub">${p.rounds} round${p.rounds === 1 ? "" : "s"} · ${p.holesPlayed} holes</div>
+          <div class="idsub">${view.rounds} round${view.rounds === 1 ? "" : "s"} · ${view.holesPlayed} holes${
+                mode === "all" ? "" : ` · ${escapeHtml(RANKING_MODES[mode].label.toLowerCase())}`}</div>
         </div>
       </div>
       <div class="statstrip">
@@ -2957,16 +2968,28 @@ async function viewPlayer(keyRaw) {
       </table>
     </div>
 
-    <div class="sectionbar"><span class="t">Scoring</span><span class="rule"></span><span class="n">${p.holesPlayed} holes</span></div>
+    <!-- A scramble record and an own-ball record are different things, and
+         adding them together produced bogeys on a scramble card that the
+         team never made. The view follows whichever board you arrived from,
+         and says so. -->
+    <div class="tabs mt-3">
+      ${[["all", "All golf"], ["scramble", "Scramble"], ["individual", "Individual"]]
+        .filter(([k]) => k === "all" || p.byMode[k].rounds > 0)
+        .map(([k, label]) => `
+          <a href="#/player/${encodeURIComponent(p.key)}?mode=${k}"
+             class="tab${mode === k ? " is-on" : ""}">${label}</a>`).join("")}
+    </div>
+
+    <div class="sectionbar"><span class="t">Scoring</span><span class="rule"></span><span class="n">${view.holesPlayed} holes</span></div>
     <div class="panel">
       <table class="dtable">
         <tbody>
           ${[
-            ["Eagles", p.eagles, "eagle"],
-            ["Birdies", p.birdies, "birdie"],
-            ["Pars", p.pars, ""],
-            ["Bogeys", p.bogeys, "bogey"],
-            ["Doubles+", p.doubles, "double-bogey"],
+            ["Eagles", view.eagles, "eagle"],
+            ["Birdies", view.birdies, "birdie"],
+            ["Pars", view.pars, ""],
+            ["Bogeys", view.bogeys, "bogey"],
+            ["Doubles+", view.doubles, "double-bogey"],
           ].map(([label, n, cls]) => `
             <tr>
               <td class="l" style="width:2.6rem">
@@ -2979,11 +3002,11 @@ async function viewPlayer(keyRaw) {
       </table>
     </div>
 
-    <div class="sectionbar"><span class="t">Rounds</span><span class="rule"></span><span class="n">${p.history.length}</span></div>
+    <div class="sectionbar"><span class="t">Rounds</span><span class="rule"></span><span class="n">${history.length}</span></div>
     <div class="panel">
       <table class="dtable">
         <tbody>
-          ${p.history.map((h) => `
+          ${history.map((h) => `
             <tr class="tap" onclick="location.hash='#/leaderboard/${h.tournamentId}'">
               <td class="l pos">${h.tied ? "T" : ""}${h.place}</td>
               <td class="l" style="max-width:0">
