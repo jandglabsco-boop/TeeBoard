@@ -4096,6 +4096,9 @@ function renderCreateForm(user, billing, opts = {}) {
 
   // Player slots follow the format: two for singles, two a side otherwise.
   // Re-rendered on a format change, keeping whatever has been typed.
+  // A group game is however many turned up, not a foursome. Twelve is a
+  // ceiling rather than an expectation — past that it is a tournament.
+  const GROUP_MAX = 12;
   let bankerCount = 4;
   function renderPlayerSlots() {
     const wrap = document.getElementById("match-players");
@@ -4104,12 +4107,12 @@ function renderCreateForm(user, billing, opts = {}) {
     if (fmtNow.group) {
       // One group, two to six of them. The slots grow and shrink rather than
       // being fixed, because a banker game is however many turned up.
-      const count = Math.max(2, Math.min(6, bankerCount));
+      const count = Math.max(2, Math.min(GROUP_MAX, bankerCount));
       wrap.innerHTML = `
         <label class="field-label">Players</label>
         ${Array.from({ length: count }, (_, i) => slot(i, `Player ${i + 1}`)).join("")}
         <div class="flex gap-2 mt-1">
-          <button type="button" id="bk-add" class="btn-secondary text-sm flex-1">Add a player</button>
+          <button type="button" id="bk-add" class="btn-secondary text-sm flex-1"${count >= GROUP_MAX ? " disabled" : ""}>Add a player</button>
           <button type="button" id="bk-remove" class="btn-secondary text-sm flex-1"${count <= 2 ? " disabled" : ""}>Remove one</button>
         </div>
         <p class="text-xs muted-2 mt-2">${fmtNow.banker
@@ -4125,7 +4128,7 @@ function renderCreateForm(user, billing, opts = {}) {
           </div>
           <p class="text-xs muted-2 mt-1.5">The banker names the figure on each hole, up to this.</p>` : ""}`;
 
-      wrap.querySelector("#bk-add").onclick = () => { bankerCount = Math.min(6, count + 1); renderPlayerSlots(); };
+      wrap.querySelector("#bk-add").onclick = () => { bankerCount = Math.min(GROUP_MAX, count + 1); renderPlayerSlots(); };
       wrap.querySelector("#bk-remove").onclick = () => { bankerCount = Math.max(2, count - 1); renderPlayerSlots(); };
       return;
     }
@@ -5686,6 +5689,26 @@ async function viewGroupScore(tournamentId) {
       </div>
 
       <div class="mt-3">${holesHtml}</div>
+
+      <!-- Somebody turning up late, or a name typed wrong at setup. Goes
+           through the same code-gated call the join screen uses, so whoever
+           is keeping score can do it without the organizer. -->
+      <details class="addplayer">
+        <summary>Add a player</summary>
+        <div class="ap-body">
+          <div class="flex gap-2">
+            <input id="ap-name" placeholder="Name" class="flex-1 min-w-0" autocomplete="off" />
+            <input id="ap-hcp" type="number" min="-10" max="54" step="0.1" placeholder="HCP"
+                   style="width:5rem" aria-label="Handicap" />
+          </div>
+          <button id="ap-go" class="btn-secondary w-full text-sm mt-2">Add to the card</button>
+          <p id="ap-err" class="text-xs status-err mt-2"></p>
+          <p class="text-xs muted-2 mt-1">
+            They start from the hole you are on — earlier holes stay blank for them.
+          </p>
+        </div>
+      </details>
+
       <a href="#/leaderboard/${tournamentId}" class="btn-primary w-full mt-1">
         ${isBanker ? (b.done ? "See the totals" : "See the money board") : (b.done ? "See the result" : "See the leaderboard")}
       </a>
@@ -5729,6 +5752,38 @@ async function viewGroupScore(tournamentId) {
         saveScore(+input.dataset.hole, v, input.dataset.member);
       });
     });
+    const apGo = document.getElementById("ap-go");
+    if (apGo) {
+      apGo.addEventListener("click", async () => {
+        const nameEl = document.getElementById("ap-name");
+        const hcpEl = document.getElementById("ap-hcp");
+        const errEl = document.getElementById("ap-err");
+        const name = nameEl.value.trim();
+        const hcpRaw = hcpEl.value.trim();
+        const handicap = hcpRaw === "" ? null : Number(hcpRaw);
+
+        errEl.textContent = "";
+        if (!name) { errEl.textContent = "Enter a name."; return; }
+        if (handicap != null && (!Number.isFinite(handicap) || handicap < -10 || handicap > 54)) {
+          errEl.textContent = "Handicap must be between +10 and 54, or left blank.";
+          return;
+        }
+
+        apGo.disabled = true;
+        const { error: err } = await sb.rpc("player_join_team", {
+          p_tournament_code: code,
+          p_team_code: teamCode,
+          p_player_name: name,
+          p_handicap: handicap,
+        });
+        apGo.disabled = false;
+
+        if (err) { errEl.textContent = err.message || "Couldn't add them."; return; }
+        toast(`${name} added`);
+        render();
+      });
+    }
+
     app.querySelectorAll("input[data-amount]").forEach((input) => {
       input.addEventListener("change", () => {
         const v = parseFloat(input.value);
