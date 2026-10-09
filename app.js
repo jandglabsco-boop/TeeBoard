@@ -38,7 +38,15 @@ if (sb) {
     if (event === "PASSWORD_RECOVERY") isPasswordRecovery = true;
     // Whoever is signed in has changed, so a cached "is this an admin" answer
     // now belongs to somebody else.
-    if (event === "SIGNED_IN" || event === "SIGNED_OUT") adminIsAdmin = null;
+    if (event === "SIGNED_IN" || event === "SIGNED_OUT") {
+      adminIsAdmin = null;
+      // Hide the admin entries at once on the way out rather than waiting on
+      // a round trip — otherwise they sit there, for the next person at this
+      // device, until something happens to re-evaluate them.
+      // The account menu is rebuilt from scratch on each render, so it picks
+      // the new answer up on its own.
+      if (typeof renderHeaderProfile === "function") renderHeaderProfile();
+    }
   });
 }
 
@@ -487,6 +495,156 @@ function sideTag(side) {
   }
   return names.map((n) => String(n).trim().charAt(0).toUpperCase()).join("&");
 }
+
+// ---------- BANKER ----------
+//
+// One player holds the bank and names what the hole is worth. They play it
+// against every other player at once: beat the banker and they pay you that
+// much, lose to them and you pay. A halved hole is nothing either way.
+//
+// The bank then goes to whoever won the hole. A banker who wins keeps it. If
+// the hole is tied for low, the tie is settled by going back a hole — then
+// another — until one of the tied players was ahead of the others. Nothing
+// else about the round decides it.
+//
+// Handicaps work as they do in a match: everyone plays off the difference
+// from the lowest in the group, so a shot is a shot regardless of who turns
+// up. A plus handicap gives nothing back here — banker is a cash game and
+// charging somebody for being good is not how it is played — so anything
+// below scratch is treated as scratch.
+
+function bankerAllocations(tournament, players) {
+  // Below scratch counts as scratch: no shots received, none given back.
+  const caps = players.map((p) => Math.max(0, Number(p.handicap) || 0));
+  const lowest = caps.length ? Math.min(...caps) : 0;
+  const alloc = new Map();
+  players.forEach((p, i) => {
+    alloc.set(p.id, strokeAllocation(tournament, caps[i] - lowest));
+  });
+  return alloc;
+}
+
+// Of the players tied for low on `hole`, who was ahead most recently before
+// it? Walks back one hole at a time. Returns null if they were level the
+// whole way — in which case the caller falls back to the playing order.
+function bankerCountback(tied, hole, netAt) {
+  for (let h = hole - 1; h >= 1; h--) {
+    let best = null, bestIds = [];
+    for (const p of tied) {
+      const n = netAt(p.id, h);
+      if (n == null) { bestIds = []; break; }          // hole not played by all
+      if (best == null || n < best) { best = n; bestIds = [p]; }
+      else if (n === best) bestIds.push(p);
+    }
+    if (bestIds.length === 1) return bestIds[0];
+  }
+  return null;
+}
+
+function buildBanker(tournament, teams) {
+  const n = tournament.num_holes;
+  const par = tournamentPar(tournament);
+
+  // Everyone is in one group, so take every player across whatever teams exist.
+  const players = (teams || []).flatMap((t) =>
+    (t.team_members || []).map((m) => {
+      const scoreMap = {};
+      (t.scores || []).forEach((sc) => {
+        if (sc.team_member_id === m.id) scoreMap[sc.hole_number] = sc.strokes;
+      });
+      return {
+        id: m.id, name: m.player_name, handicap: m.handicap,
+        teamId: t.id, scoreMap, signed: !!t.signed_at,
+      };
+    }));
+
+  if (players.length < 2) return { incomplete: true, players };
+
+  const alloc = bankerAllocations(tournament, players);
+  const netAt = (id, h) => {
+    const p = players.find((x) => x.id === id);
+    const gross = p?.scoreMap[h];
+    if (gross == null) return null;
+    return gross - (alloc.get(id)?.[h - 1] ?? 0);
+  };
+
+  const amounts = tournament.bankerAmounts || {};     // { hole: amount }
+  const money = Object.fromEntries(players.map((p) => [p.id, 0]));
+  const holes = [];
+
+  // The first hole is banked by the first player on the card.
+  let bankerId = players[0].id;
+
+  for (let h = 1; h <= n; h++) {
+    const amount = Number(amounts[h]) || 0;
+    const nets = players.map((p) => ({ p, net: netAt(p.id, h) }));
+    const allIn = nets.every((x) => x.net != null);
+
+    if (!allIn) {
+      holes.push({ hole: h, played: false, bankerId, amount });
+      continue;
+    }
+
+    const bankerNet = nets.find((x) => x.p.id === bankerId).net;
+
+    // The bank against each player in turn.
+    const settle = [];
+    nets.forEach(({ p, net }) => {
+      if (p.id === bankerId) return;
+      let delta = 0;                                   // to the player
+      if (net < bankerNet) delta = amount;
+      else if (net > bankerNet) delta = -amount;
+      settle.push({ id: p.id, name: p.name, net, delta });
+      money[p.id] += delta;
+      money[bankerId] -= delta;
+    });
+
+    // Who won the hole outright, and so takes the bank.
+    const low = Math.min(...nets.map((x) => x.net));
+    const tiedLow = nets.filter((x) => x.net === low).map((x) => x.p);
+    let winner;
+    if (tiedLow.length === 1) {
+      winner = tiedLow[0];
+    } else {
+      // Settled by going back a hole at a time; failing that, playing order.
+      winner = bankerCountback(tiedLow, h, netAt)
+        ?? tiedLow.find((p) => p.id === bankerId)      // the banker holds it
+        ?? tiedLow[0];
+    }
+
+    holes.push({
+      hole: h, played: true, amount,
+      bankerId, bankerName: players.find((p) => p.id === bankerId).name,
+      bankerNet,
+      settle,
+      winnerId: winner.id,
+      tiedLow: tiedLow.length > 1,
+      // What the bank made or lost on this hole.
+      bankerDelta: -settle.reduce((a, x) => a + x.delta, 0),
+      running: { ...money },
+    });
+
+    bankerId = winner.id;                              // a winning banker keeps it
+  }
+
+  const played = holes.filter((x) => x.played).length;
+  const unpriced = holes.filter((x) => x.played && !x.amount).length;
+
+  return {
+    incomplete: false,
+    players: players.map((p) => ({
+      ...p,
+      money: money[p.id],
+      pops: (alloc.get(p.id) || []).reduce((a, b) => a + b, 0),
+    })),
+    holes, played, unpriced,
+    nextBankerId: bankerId,
+    done: played === n || players.every((p) => p.signed),
+    par,
+  };
+}
+
+const isBankerFormat = (t) => formatOf(t).banker === true;
 
 // ---------- MATCH PLAY ----------
 //
@@ -1113,10 +1271,16 @@ async function renderHeaderProfile() {
         ${fullName ? `<div class="text-sm font-bold">${escapeHtml(fullName)}</div>` : ""}
         <div class="text-sm ${fullName ? "muted" : "font-semibold"} mb-3 break-all">${escapeHtml(user.email)}</div>
         ${IS_NATIVE_APP ? "" : `<a href="#/billing" class="btn-secondary w-full text-sm mb-2">Billing</a>`}
-        <a href="#/stats" class="btn-secondary w-full text-sm mb-2">Site traffic</a>
-        ${(await isTeeboardAdmin())
-          ? `<a href="#/users" class="btn-secondary w-full text-sm mb-2">Users &amp; tournaments</a>`
-          : ""}
+        ${(await isTeeboardAdmin()) ? `
+          <!-- Site traffic used to sit outside this check, so every signed-in
+               organizer could open the whole site's numbers. All three are
+               behind it now; the screens are gated server side as well. -->
+          <div class="pm-admin">
+            <div class="eyebrow mb-2">Admin</div>
+            <a href="#/stats" class="btn-secondary w-full text-sm mb-2">Site traffic</a>
+            <a href="#/users" class="btn-secondary w-full text-sm mb-2">Users</a>
+            <a href="#/mine?all=1" class="btn-secondary w-full text-sm mb-2">All tournaments</a>
+          </div>` : ""}
         <button id="profile-signout" class="btn-secondary w-full text-sm">Sign out</button>
       </div>
     </div>
@@ -1361,7 +1525,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   if (await handleAuthCallback()) return;
   initHeaderMenu();
-  refreshAdminMenu();
   route();
   updateOfflineBadge();
   flushScoreQueue();
@@ -2393,19 +2556,6 @@ function rankedFor(players, mode) {
     p.tiedRank = list.some((o, j) => j !== i && o.rank === p.rank);
   });
   return list;
-}
-
-// Show the admin entries only to an admin. Hiding them is a courtesy, not a
-// control: every screen behind them is gated server side as well.
-async function refreshAdminMenu() {
-  const block = document.getElementById("menu-admin");
-  if (!block) return;
-  try {
-    const user = await getUser();
-    block.hidden = !(user && await isTeeboardAdmin());
-  } catch {
-    block.hidden = true;
-  }
 }
 
 // ---------- HEADER MENU ----------

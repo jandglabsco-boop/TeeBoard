@@ -1326,11 +1326,8 @@
     letter-spacing: .22em; color: #4FA8E8; text-transform: uppercase; margin-top: 3px;
   }
 
-  .menu-head {
-    font-family: 'Barlow', sans-serif; font-size: .64rem; font-weight: 700;
-    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
-    padding: 4px 12px 6px;
-  }
+  /* Admin group inside the account menu. */
+  .pm-admin { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1389,25 +1386,7 @@
               <span class="mi-s">Codes, scores and settings for what you run.</span>
             </a>
 
-            <!-- Admin only. Hidden by default and revealed from the database,
-                 never from anything the page could be told to believe: the
-                 screens behind these are gated server side regardless. -->
-            <div id="menu-admin" hidden>
-              <div class="menusep"></div>
-              <div class="menu-head">Admin</div>
-              <a href="#/stats" role="menuitem" class="menuitem">
-                <span class="mi-t">Site traffic</span>
-                <span class="mi-s">Visitors, views and where they came from.</span>
-              </a>
-              <a href="#/users" role="menuitem" class="menuitem">
-                <span class="mi-t">Users</span>
-                <span class="mi-s">Every organizer account and its billing.</span>
-              </a>
-              <a href="#/mine?all=1" role="menuitem" class="menuitem">
-                <span class="mi-t">All tournaments</span>
-                <span class="mi-s">Every round on TeeBoard, with its code.</span>
-              </a>
-            </div>
+
             <div class="menusep"></div>
             <a href="#/tournaments" role="menuitem" class="menuitem"><span class="mi-t">Tournaments</span></a>
             <a href="#/players" role="menuitem" class="menuitem"><span class="mi-t">Rankings</span></a>
@@ -1480,6 +1459,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20261008b"></script>
+  <script src="app.js?v=20261008d"></script>
 </body>
 </html>
