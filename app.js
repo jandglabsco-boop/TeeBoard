@@ -1149,7 +1149,7 @@ const routes = [
   // Same screen, opened on a match format. A match is a round with two
   // sides, so it shares the whole create flow rather than forking it.
   { re: /^#\/match$/, view: () => viewCreate({ match: true }) },
-  { re: /^#\/mine$/, view: viewMine },
+  { re: /^#\/mine(\?.*)?$/, view: viewMine },
   // Wrapped so the regex match array isn't passed in as prefillCode — bare
   // `view: viewJoin` handed it the match ("#/join"), which pre-filled the code
   // box with that string and auto-fired a doomed lookup on arrival.
@@ -1361,6 +1361,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   if (await handleAuthCallback()) return;
   initHeaderMenu();
+  refreshAdminMenu();
   route();
   updateOfflineBadge();
   flushScoreQueue();
@@ -2394,6 +2395,19 @@ function rankedFor(players, mode) {
   return list;
 }
 
+// Show the admin entries only to an admin. Hiding them is a courtesy, not a
+// control: every screen behind them is gated server side as well.
+async function refreshAdminMenu() {
+  const block = document.getElementById("menu-admin");
+  if (!block) return;
+  try {
+    const user = await getUser();
+    block.hidden = !(user && await isTeeboardAdmin());
+  } catch {
+    block.hidden = true;
+  }
+}
+
 // ---------- HEADER MENU ----------
 // Wired once at load, not per render, so the listeners don't stack up as the
 // router redraws the page.
@@ -2679,11 +2693,19 @@ async function viewMine() {
   const user = await getUser();
   if (!user) return renderAuthGate();
 
-  const { data, error } = await sb
+  // ?all=1 is the admin view: every round on TeeBoard rather than this
+  // account's. The filter is simply dropped — RLS still decides what comes
+  // back, so a non-admin asking for it gets their own rounds anyway.
+  const wantAll = new URLSearchParams(location.hash.split("?")[1] || "").get("all") === "1";
+  const admin = wantAll ? await isTeeboardAdmin() : false;
+  const showingAll = wantAll && admin;
+
+  let q = sb
     .from("tournaments")
-    .select("id, name, join_code, format, num_holes, status, created_at, course_name, is_public")
-    .eq("created_by", user.id)
+    .select("id, name, join_code, format, num_holes, status, created_at, course_name, is_public, created_by")
     .order("created_at", { ascending: false });
+  if (!showingAll) q = q.eq("created_by", user.id);
+  const { data, error } = await q;
 
   if (error) {
     app.innerHTML = `<div class="card p-6 mt-4 text-center">
@@ -2704,6 +2726,9 @@ async function viewMine() {
           ${escapeHtml(formatOf(t).label)} · ${t.num_holes} holes
           ${t.course_name ? ` · ${escapeHtml(t.course_name)}` : ""}
           ${t.is_public === false ? ` · <span style="color:var(--ink-3)">Private</span>` : ""}
+          ${showingAll && t.created_by !== user.id
+            ? ` · <span style="color:var(--blue);font-weight:600">Another organizer</span>`
+            : ""}
         </div>
       </div>
       <button class="own-code" data-copy="${escapeHtml(t.join_code)}"
@@ -2717,8 +2742,14 @@ async function viewMine() {
 
   app.innerHTML = `
     <div class="idband">
-      <div class="idname" style="font-size:1.3rem">What I run</div>
-      <div class="idsub">${all.length} round${all.length === 1 ? "" : "s"} created on this account</div>
+      <div class="idname" style="font-size:1.3rem">${showingAll ? "All tournaments" : "What I run"}</div>
+      <div class="idsub">${all.length} round${all.length === 1 ? "" : "s"} ${
+        showingAll ? "on TeeBoard" : "created on this account"}</div>
+      ${admin ? `
+        <div class="tabs">
+          <a href="#/mine" class="tab${showingAll ? "" : " is-on"}">Mine</a>
+          <a href="#/mine?all=1" class="tab${showingAll ? " is-on" : ""}">Everyone's</a>
+        </div>` : ""}
     </div>
 
     ${block("Matches", matches, "No matches yet.")}
