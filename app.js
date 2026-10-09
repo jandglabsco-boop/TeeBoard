@@ -5442,15 +5442,32 @@ async function renderTeamStep(tournament, enteredCode) {
     });
   }
 
-  nameSearch.addEventListener("input", () => {
-    const q = nameSearch.value.trim().toLowerCase();
-    if (!q) return renderNameResults([]);
-    const matches = roster.filter((m) => m.player_name.toLowerCase().includes(q)).slice(0, 8);
-    if (!matches.length) {
-      nameResults.innerHTML = `<div class="text-xs muted-2 p-1">No match yet — keep typing, or use a team code below.</div>`;
+  // The roster is drawn as soon as it loads, and again whenever the box is
+  // cleared. It used to be drawn only from the input handler, with an empty
+  // query rendering an empty list — so "Find your name" showed nothing at all
+  // until you guessed at typing, which reads as a broken screen.
+  function showRoster(list) {
+    if (!list.length) {
+      nameResults.innerHTML = `<div class="text-xs muted-2 p-1">No match — check the spelling, or use a team code below.</div>`;
       return;
     }
-    renderNameResults(matches);
+    renderNameResults(list);
+  }
+
+  const INITIAL_NAMES = 12;
+  function showAll() {
+    showRoster(roster.slice(0, INITIAL_NAMES));
+    if (roster.length > INITIAL_NAMES) {
+      nameResults.insertAdjacentHTML("beforeend",
+        `<div class="text-xs muted-2 p-2 text-center">${roster.length - INITIAL_NAMES} more — start typing to find yours.</div>`);
+    }
+  }
+  showAll();
+
+  nameSearch.addEventListener("input", () => {
+    const q = nameSearch.value.trim().toLowerCase();
+    if (!q) return showAll();
+    showRoster(roster.filter((m) => m.player_name.toLowerCase().includes(q)).slice(0, 8));
   });
 
   // ---- Fallback: team code or brand-new team, for anyone not pre-added ----
