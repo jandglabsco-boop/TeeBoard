@@ -1328,6 +1328,47 @@
 
   /* Admin group inside the account menu. */
   .pm-admin { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px; }
+
+  /* Banker: the money, and who holds the bank. */
+  .moneycell {
+    display: inline-block; min-width: 3.4rem; padding: 4px 8px; border-radius: 6px;
+    font-family: 'Barlow', sans-serif; font-weight: 700; font-size: .92rem;
+    font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--ink-2);
+  }
+  .moneycell.up { background: #EAF2FB; color: #1668C4; }
+  .moneycell.dn { background: #FDEEEE; color: var(--under); }
+
+  .bankertag {
+    display: inline-block; margin-left: 7px; vertical-align: middle;
+    background: var(--navy); color: #fff;
+    font-family: 'Barlow', sans-serif; font-weight: 700;
+    font-size: .58rem; letter-spacing: .09em; text-transform: uppercase;
+    padding: 3px 7px; border-radius: 5px; white-space: nowrap;
+  }
+  /* The banker's own row on a hole, so the eye finds it without reading. */
+  .bk-is-banker {
+    background: var(--surface-2); border-radius: 7px;
+    margin: 0 -4px; padding: 3px 4px;
+    box-shadow: inset 2px 0 0 var(--navy);
+  }
+
+  /* Running money, pinned above the holes while scoring. */
+  .moneystrip {
+    display: flex; gap: 7px; overflow-x: auto; padding: 10px 0 2px;
+    position: sticky; top: 60px; z-index: 5;
+    background: var(--paper); scrollbar-width: none;
+  }
+  .moneystrip::-webkit-scrollbar { display: none; }
+  .ms-chip {
+    flex: none; display: flex; align-items: center; gap: 6px;
+    padding: 6px 11px; border-radius: 999px; font-size: .78rem;
+    background: var(--surface); border: 1px solid var(--line); white-space: nowrap;
+  }
+  .ms-chip b { font-family: 'Barlow', sans-serif; font-variant-numeric: tabular-nums; }
+  .ms-chip.up { border-color: #BFD8F2; background: #EAF2FB; }
+  .ms-chip.up b { color: #1668C4; }
+  .ms-chip.dn { border-color: #F0C9C9; background: #FDEEEE; }
+  .ms-chip.dn b { color: var(--under); }
 </style>
 </head>
 <body class="min-h-screen">
@@ -1459,6 +1500,6 @@
   </footer>
 
   <script src="config.js"></script>
-  <script src="app.js?v=20261008d"></script>
+  <script src="app.js?v=20261008f"></script>
 </body>
 </html>
